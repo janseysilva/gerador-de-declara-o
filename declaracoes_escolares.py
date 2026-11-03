@@ -32,7 +32,7 @@ import tkinter as tk
 import tkinter.font as tkfont
 from tkinter import ttk, filedialog, messagebox
 
-VERSAO_PROGRAMA = "1.3"
+VERSAO_PROGRAMA = "1.4"
 NOME_PROGRAMA = "Declarações Escolares"
 
 
@@ -1461,9 +1461,26 @@ class Aplicacao(tk.Tk):
         campo(linha, "Motivo", e["motivo"], opcoes=[
             "atendimento na escola", "reunião de pais e mestres", "atendimento com a equipe pedagógica",
             "atendimento com a gestão escolar", "entrega de boletim"]).pack(side="left", fill="x", expand=True)
-        campo(linha, "Entrada", e["hora_ini"], largura=9).pack(side="left", padx=(8, 0))
-        campo(linha, "Saída", e["hora_fim"], largura=9).pack(side="left", padx=(8, 0))
+        for titulo, chave in (("Entrada", "hora_ini"), ("Saída", "hora_fim")):
+            q = campo(linha, titulo, e[chave], largura=7)
+            q.entrada.configure(justify="center")
+            q.pack(side="left", padx=(8, 0))
+            e[chave].trace_add("write", lambda *_, v=e[chave], w=q.entrada: self._mascara_hora(v, w))
         self.extras["comparecimento"] = f
+
+    def _mascara_hora(self, var, entrada):
+        """Hora sempre no formato 00:00: só números, os dois-pontos entram sozinhos."""
+        atual = var.get()
+        numeros = re.sub(r"\D", "", atual)[:4]
+        certo = numeros if len(numeros) <= 2 else numeros[:2] + ":" + numeros[2:]
+        if certo != atual:
+            var.set(certo)
+            entrada.icursor("end")
+
+    @staticmethod
+    def _hora_valida(texto):
+        m = re.fullmatch(r"(\d{1,2}):(\d{2})", texto or "")
+        return bool(m) and int(m.group(1)) < 24 and int(m.group(2)) < 60
 
     def _mostrar_extras(self):
         for chave, quadro in self.extras.items():
@@ -1780,10 +1797,18 @@ class Aplicacao(tk.Tk):
         if not self.aluno:
             self.var_status.set("Escolha um aluno primeiro.")
             return
-        if self.var_tipo.get() == "comparecimento" and not self.ext["resp_nome"].get().strip():
-            self.var_status.set("Digite o nome da pessoa que compareceu.")
-            self.entrada_outro.focus_set()
-            return
+        if self.var_tipo.get() == "comparecimento":
+            if not self.ext["resp_nome"].get().strip():
+                self.var_status.set("Digite o nome da pessoa que compareceu.")
+                self.entrada_outro.focus_set()
+                return
+            for chave, nome in (("hora_ini", "entrada"), ("hora_fim", "saída")):
+                if not self._hora_valida(self.ext[chave].get()):
+                    self.var_status.set("Confira a hora de {} (use o formato 14:30).".format(nome))
+                    return
+            if self.ext["hora_fim"].get() < self.ext["hora_ini"].get().zfill(5):
+                self.var_status.set("A hora de saída está antes da hora de entrada.")
+                return
         cfg = self.cfg
         if not cfg.get("pdf") and not cfg.get("word"):
             cfg["pdf"] = True
