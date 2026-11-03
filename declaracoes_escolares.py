@@ -32,7 +32,7 @@ import tkinter as tk
 import tkinter.font as tkfont
 from tkinter import ttk, filedialog, messagebox
 
-VERSAO_PROGRAMA = "1.6"
+VERSAO_PROGRAMA = "1.7"
 NOME_PROGRAMA = "Declarações Escolares"
 
 
@@ -1398,8 +1398,8 @@ class Chip(tk.Canvas):
     escolhido); sem `valor`, liga e desliga.
     """
 
-    ALTURA = 34
-    PAD_ESQ, ICONE, ESPACO, PAD_DIR = 12, 16, 8, 16
+    ALTURA = 30
+    PAD_ESQ, ICONE, ESPACO, PAD_DIR = 11, 16, 8, 15
     BORDA = 1.5
 
     def __init__(self, pai, texto, variavel, valor=None, largura=None):
@@ -1580,7 +1580,7 @@ class Aplicacao(tk.Tk):
             pass
         largura = min(960, self.winfo_screenwidth() - 40)
         # um pouco mais alta que o Frequência: o quadro 3 precisa caber inteiro com a Segoe UI
-        altura = min(800, self.winfo_screenheight() - 90)
+        altura = min(840, self.winfo_screenheight() - 80)
         self.geometry("{}x{}+{}+{}".format(
             largura, altura, (self.winfo_screenwidth() - largura) // 2,
             max((self.winfo_screenheight() - altura) // 2 - 20, 0)))
@@ -1715,7 +1715,7 @@ class Aplicacao(tk.Tk):
         self.botao_pesquisar.pack(side="left", padx=(10, 0))
 
         # Resultado da pesquisa: só aparece depois de clicar em Pesquisar
-        self.area_result = tk.Frame(c1, bg=COR_CARTAO, height=104)
+        self.area_result = tk.Frame(c1, bg=COR_CARTAO, height=96)
         self.area_result.pack(fill="x", pady=(10, 0))
         self.area_result.pack_propagate(False)
         self.dica_result = tk.Label(self.area_result, text="", bg=COR_CARTAO, fg=COR_TEXTO_FRACO,
@@ -1765,7 +1765,7 @@ class Aplicacao(tk.Tk):
         grade.pack(fill="x")
         for chaves in FILEIRAS_TIPOS:
             fileira = tk.Frame(grade, bg=COR_CARTAO)
-            fileira.pack(fill="x", pady=(0, 6))
+            fileira.pack(fill="x", pady=(0, 4))
             for chave in chaves:
                 Chip(fileira, NOME_TIPO[chave], self.var_tipo, chave).pack(side="left", padx=(0, 6))
         self.area_extras = tk.Frame(c3, bg=COR_CARTAO)
@@ -1865,7 +1865,9 @@ class Aplicacao(tk.Tk):
         t["motivo"].trace_add("write", lambda *_: self._ao_mudar_motivo())
         linha = tk.Frame(f, bg=COR_CARTAO)
         linha.pack(fill="x", pady=(4, 0))
-        campo(linha, "Nome do responsável", t["resp_nome"]).pack(side="left", fill="x", expand=True)
+        q = campo(linha, "Responsável (escolha ou digite outro nome)", t["resp_nome"], opcoes=[])
+        q.pack(side="left", fill="x", expand=True)
+        self.combo_resp_just = q.entrada
         campo(linha, "Telefone/WhatsApp", t["telefone"], largura=15).pack(side="left", padx=(8, 0))
         self.extras["justificativa"] = f
 
@@ -1896,10 +1898,15 @@ class Aplicacao(tk.Tk):
     def _preparar_termos(self, a):
         """Ao escolher o aluno: limpa os campos dos termos e mostra o que vem do arquivo."""
         t = self.termo
-        for k in ("data_falta", "qtd_faltas", "bolsa", "motivo_outro", "resp_nome", "profissao", "c_nome", "c_cpf"):
+        for k in ("data_falta", "qtd_faltas", "bolsa", "motivo_outro", "profissao", "c_nome", "c_cpf"):
             t[k].set("")
         t["motivo"].set("(em branco)")
         t["telefone"].set(a.get("telefone", ""))
+        nomes = [n for _r, n in self._responsaveis(a)]
+        if a.get("responsavel") and a["responsavel"] not in nomes:
+            nomes.insert(0, a["responsavel"])
+        self.combo_resp_just.configure(values=nomes)
+        t["resp_nome"].set(a.get("responsavel") or (nomes[0] if nomes else ""))
         t["horario"].set(datetime.now().strftime("%H:%M"))
         d = dados_termo(a)
         if d["resp_nome"]:
