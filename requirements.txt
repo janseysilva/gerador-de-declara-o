@@ -1,0 +1,4 @@
+reportlab
+python-docx
+pillow
+pyinstaller
