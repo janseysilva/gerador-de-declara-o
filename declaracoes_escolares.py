@@ -32,7 +32,7 @@ import tkinter as tk
 import tkinter.font as tkfont
 from tkinter import ttk, filedialog, messagebox
 
-VERSAO_PROGRAMA = "1.0"
+VERSAO_PROGRAMA = "1.1"
 NOME_PROGRAMA = "Declarações Escolares"
 
 
@@ -790,6 +790,8 @@ class Botao(tk.Canvas):
                       "texto": "#FFFFFF", "texto_off": "#FFFFFF", "borda": None},
         "suave": {"fundo": "#E6ECF7", "passa": "#D5DFF1", "off": "#F1F3F7",
                   "texto": "#17327A", "texto_off": "#AAB2C4", "borda": None},
+        "azul": {"fundo": "#2A63C8", "passa": "#3A73D8", "off": "#A9BCE3",
+                 "texto": "#FFFFFF", "texto_off": "#FFFFFF", "borda": None},
         "tracejado": {"fundo": None, "passa": "#EAF1FF", "off": None,
                       "texto": "#2A63C8", "texto_off": "#AAB2C4", "borda": "#9DB6E6"},
     }
@@ -1103,7 +1105,8 @@ class Aplicacao(tk.Tk):
         self.achados = []
         self.aluno = None               # aluno escolhido (cópia, pode ser corrigida)
         self.ultimo_arquivo = ""
-        self.modo_lista = "alunos"      # ou "historico"
+        self.linhas_resultado = []
+        self.escolhido = -1
 
         self.var_busca = tk.StringVar()
         self.var_tipo = tk.StringVar(value="matricula")
@@ -1119,7 +1122,7 @@ class Aplicacao(tk.Tk):
 
         configurar_estilo(self)
         self._montar_interface()
-        self.var_busca.trace_add("write", lambda *_: self._pesquisar())
+        self.var_busca.trace_add("write", lambda *_: self._atualizar_dica())
         self.var_tipo.trace_add("write", lambda *_: self._mostrar_extras())
         self._atualizar_banco()
         self._mostrar_extras()
@@ -1174,19 +1177,20 @@ class Aplicacao(tk.Tk):
         self._montar_cabecalho()
         corpo = tk.Frame(self, bg=COR_FUNDO)
         corpo.pack(fill="both", expand=True, padx=26, pady=(18, 16))
-        corpo.columnconfigure(0, weight=11, uniform="col")
-        corpo.columnconfigure(1, weight=9, uniform="col")
+        corpo.columnconfigure(0, weight=1, uniform="col")
+        corpo.columnconfigure(1, weight=1, uniform="col")
         corpo.rowconfigure(1, weight=1)
 
         # 1 - Pesquisar aluno ------------------------------------------------
         externo, c1, direita = cartao(corpo, "Pesquisar aluno", 1)
-        externo.grid(row=0, column=0, rowspan=2, sticky="nsew", padx=(0, 8), pady=(0, 12))
+        externo.grid(row=0, column=0, columnspan=2, sticky="nsew", pady=(0, 12))
         self.marca_banco = tk.Label(direita, text="", bg=COR_CARTAO, fg=COR_VERDE, font=(FONTE, 10, "bold"))
         self.marca_banco.pack(side="right")
 
-        caixa = tk.Frame(c1, bg=COR_CARTAO, highlightthickness=1, highlightbackground="#CFD8EA",
-                         highlightcolor=COR_AZUL)
-        caixa.pack(fill="x", pady=(4, 8))
+        linha = tk.Frame(c1, bg=COR_CARTAO)
+        linha.pack(fill="x", pady=(4, 0))
+        caixa = tk.Frame(linha, bg=COR_CARTAO, highlightthickness=1, highlightbackground="#CFD8EA")
+        caixa.pack(side="left", fill="x", expand=True)
         lupa = tk.Canvas(caixa, width=34, height=34, bg="#FFFFFF", highlightthickness=0, bd=0)
         lupa.create_oval(10, 9, 22, 21, outline=COR_AZUL_CLARO, width=2)
         lupa.create_line(20.5, 19.5, 26, 25, fill=COR_AZUL_CLARO, width=2.4, capstyle="round")
@@ -1197,56 +1201,56 @@ class Aplicacao(tk.Tk):
         self.entrada_busca.pack(side="left", fill="x", expand=True, ipady=6, padx=(2, 10))
         self.entrada_busca.bind("<FocusIn>", lambda e: caixa.configure(highlightbackground=COR_AZUL))
         self.entrada_busca.bind("<FocusOut>", lambda e: caixa.configure(highlightbackground="#CFD8EA"))
-        self.dica_busca = tk.Label(caixa, text="Digite o nome ou o código do aluno",
+        self.entrada_busca.bind("<Return>", lambda e: self._pesquisar())
+        self.entrada_busca.bind("<KP_Enter>", lambda e: self._pesquisar())
+        self.dica_busca = tk.Label(caixa, text="Digite o nome do aluno (ou parte dele) ou o código",
                                    bg="#FFFFFF", fg="#9AA5B8", font=(FONTE, 12), cursor="xterm")
         self.dica_busca.place(x=38, rely=0.5, anchor="w")
         self.dica_busca.bind("<Button-1>", lambda e: self.entrada_busca.focus_set())
-        self.entrada_busca.bind("<Down>", self._descer_para_lista)
-        self.entrada_busca.bind("<Return>", lambda e: self._escolher_primeiro())
+        self.botao_pesquisar = Botao(linha, "Pesquisar", self._pesquisar, estilo="azul",
+                                     fonte=(FONTE, 11, "bold"), pad_x=26, pad_y=8)
+        self.botao_pesquisar.pack(side="left", padx=(10, 0))
 
-        abas = tk.Frame(c1, bg=COR_CARTAO)
-        abas.pack(fill="x", pady=(0, 6))
-        self.var_aba = tk.StringVar(value="alunos")
-        Chip(abas, "Alunos", self.var_aba, "alunos").pack(side="left")
-        Chip(abas, "Últimas declarações", self.var_aba, "historico").pack(side="left", padx=(8, 0))
-        self.rotulo_contagem = rotulo(abas, "", fraco=True, tam=9)
-        self.rotulo_contagem.pack(side="right")
-        self.var_aba.trace_add("write", lambda *_: self._trocar_aba())
+        # Resultado da pesquisa: só aparece depois de clicar em Pesquisar
+        self.area_result = tk.Frame(c1, bg=COR_CARTAO, height=112)
+        self.area_result.pack(fill="x", pady=(10, 0))
+        self.area_result.pack_propagate(False)
+        self.dica_result = tk.Label(self.area_result, text="", bg=COR_CARTAO, fg=COR_TEXTO_FRACO,
+                                    font=(FONTE, 9), anchor="nw", justify="left")
+        self.quadro_lista = tk.Frame(self.area_result, bg=COR_CARTAO)
+        self.rolagem = ttk.Scrollbar(self.quadro_lista, orient="vertical")
+        self.tela = tk.Canvas(self.quadro_lista, bg=COR_CARTAO, highlightthickness=0, bd=0,
+                              yscrollcommand=self.rolagem.set)
+        self.rolagem.configure(command=self.tela.yview)
+        self.tela.pack(side="left", fill="both", expand=True)
+        self.linhas = tk.Frame(self.tela, bg=COR_CARTAO)
+        self._janela_linhas = self.tela.create_window((0, 0), window=self.linhas, anchor="nw")
+        self.linhas.bind("<Configure>", lambda e: self._ajustar_rolagem())
+        self.tela.bind("<Configure>", lambda e: (self.tela.itemconfigure(self._janela_linhas, width=e.width),
+                                                 self._ajustar_rolagem()))
+        self.bind_all("<MouseWheel>", self._roda_do_mouse)
 
-        self.area_lista = tk.Frame(c1, bg=COR_CARTAO)
-        self.area_lista.pack(fill="both", expand=True)
-        rolagem = ttk.Scrollbar(self.area_lista, orient="vertical")
-        self.lista = ttk.Treeview(self.area_lista, style="Lista.Treeview", show="headings",
-                                  selectmode="browse", yscrollcommand=rolagem.set)
-        rolagem.configure(command=self.lista.yview)
-        rolagem.pack(side="right", fill="y")
-        self.lista.pack(side="left", fill="both", expand=True)
-        self.lista.tag_configure("par", background="#FAFBFD")
-        self.lista.bind("<<TreeviewSelect>>", self._ao_selecionar)
-        self.lista.bind("<Double-1>", self._ao_duplo_clique)
-        self.lista.bind("<Return>", self._ao_duplo_clique)
-
-        self.vazio = tk.Frame(c1, bg=COR_LINHA, highlightthickness=1, highlightbackground=COR_BORDA)
+        self.vazio = tk.Frame(self.area_result, bg=COR_LINHA, highlightthickness=1, highlightbackground=COR_BORDA)
         tk.Label(self.vazio, text="Ainda não há alunos no banco de dados.", bg=COR_LINHA,
-                 fg=COR_AZUL_ESCURO, font=(FONTE, 11, "bold")).pack(anchor="w", padx=16, pady=(16, 2))
-        tk.Label(self.vazio, text="Abra o arquivo de alunos do sistema da SEMED (TXTALUNO) na\n"
-                 "Configuração. Ele fica guardado e só precisa ser aberto de novo\n"
-                 "quando a lista de alunos mudar.", justify="left", bg=COR_LINHA,
-                 fg=COR_TEXTO_FRACO, font=(FONTE, 9)).pack(anchor="w", padx=16)
-        Botao(self.vazio, "Abrir a Configuração", self._abrir_configuracao,
-              estilo="tracejado").pack(anchor="w", padx=16, pady=(12, 16))
+                 fg=COR_AZUL_ESCURO, font=(FONTE, 10, "bold")).pack(anchor="w", padx=14, pady=(10, 0))
+        tk.Label(self.vazio, text="Abra o arquivo de alunos do sistema da SEMED (TXTALUNO) na Configuração. "
+                 "Ele fica guardado e só precisa ser aberto de novo quando a lista mudar.",
+                 justify="left", wraplength=820, bg=COR_LINHA, fg=COR_TEXTO_FRACO,
+                 font=(FONTE, 9)).pack(anchor="w", padx=14)
+        Botao(self.vazio, "Abrir a Configuração", self._abrir_configuracao, estilo="tracejado",
+              pad_y=5).pack(anchor="w", padx=14, pady=(8, 10))
 
         # 2 - Aluno escolhido -------------------------------------------------
         externo, c2, self.canto_aluno = cartao(corpo, "Aluno", 2)
-        externo.grid(row=0, column=1, sticky="nsew", padx=(8, 0), pady=(0, 12))
+        externo.grid(row=1, column=0, sticky="nsew", padx=(0, 8), pady=(0, 12))
         self.nome_aluno = tk.Label(c2, text="", bg=COR_CARTAO, fg=COR_AZUL_ESCURO, font=(FONTE, 12, "bold"),
-                                   anchor="w", justify="left", wraplength=340)
+                                   anchor="w", justify="left", wraplength=400)
         self.nome_aluno.pack(fill="x")
         self.info_aluno = tk.Label(c2, text="", bg=COR_CARTAO, fg=COR_TEXTO, font=(FONTE, 9),
                                    anchor="w", justify="left")
         self.info_aluno.pack(fill="x", pady=(2, 0))
         self.alerta_aluno = tk.Label(c2, text="", bg=COR_CARTAO, fg=COR_LARANJA, font=(FONTE, 9, "bold"),
-                                     anchor="w", justify="left", wraplength=340)
+                                     anchor="w", justify="left", wraplength=400)
         self.alerta_aluno.pack(fill="x", pady=(4, 0))
         self.botao_corrigir = Botao(c2, "Corrigir dados do aluno", self._corrigir_aluno,
                                     estilo="tracejado", pad_y=5, pad_x=12)
@@ -1329,19 +1333,19 @@ class Aplicacao(tk.Tk):
 
     def _atualizar_banco(self):
         tem = bool(self.alunos)
-        self.marca_banco.configure(text="✓  {} alunos".format(len(self.alunos)) if tem else "")
+        self.marca_banco.configure(text="✓  {} alunos no banco de dados".format(len(self.alunos)) if tem else "")
+        self.botao_pesquisar.definir_ativo(tem)
+        self._limpar_resultados()
         if tem:
-            self.vazio.pack_forget()
-            self.area_lista.pack(fill="both", expand=True)
-            self.entrada_busca.configure(state="normal")
+            self._mostrar_dica("Digite o nome do aluno (ou só uma parte dele) e clique em Pesquisar.\n"
+                               "Os alunos encontrados aparecem aqui; clique no certo.")
+            self.var_status.set("Pesquise o aluno, escolha o tipo de declaração e clique em Gerar declaração.")
         else:
-            self.area_lista.pack_forget()
-            self.vazio.pack(fill="x", pady=(4, 0))
+            self.dica_result.place_forget()
+            self.quadro_lista.place_forget()
+            self.vazio.place(x=0, y=0, relwidth=1, relheight=1)
+            self.var_status.set("Comece abrindo o arquivo de alunos na Configuração.")
         self._atualizar_dica()
-        self._trocar_aba()
-        self.var_status.set(
-            "Digite parte do nome e clique no aluno. Depois escolha o tipo e clique em Gerar."
-            if tem else "Comece abrindo o arquivo de alunos na Configuração.")
 
     def _atualizar_dica(self):
         if self.var_busca.get():
@@ -1349,107 +1353,113 @@ class Aplicacao(tk.Tk):
         else:
             self.dica_busca.place(x=38, rely=0.5, anchor="w")
 
-    def _trocar_aba(self):
-        self.modo_lista = self.var_aba.get()
-        lista = self.lista
-        if self.modo_lista == "historico":
-            lista.configure(columns=("quando", "num", "tipo", "aluno"))
-            for col, titulo, larg, est in (("quando", "Data", 122, False), ("num", "Nº", 46, False),
-                                           ("tipo", "Tipo", 118, False), ("aluno", "Aluno", 140, True)):
-                lista.heading(col, text=titulo, anchor="w")
-                lista.column(col, width=larg, minwidth=40, stretch=est, anchor="w")
-        else:
-            lista.configure(columns=("nome", "turma", "nasc"))
-            for col, titulo, larg, est in (("nome", "Nome", 180, True), ("turma", "Fase / turma", 148, False),
-                                           ("nasc", "Nascimento", 92, False)):
-                lista.heading(col, text=titulo, anchor="w")
-                lista.column(col, width=larg, minwidth=40, stretch=est, anchor="w")
-        self._pesquisar()
+    def _mostrar_dica(self, texto):
+        self.vazio.place_forget()
+        self.quadro_lista.place_forget()
+        self.dica_result.configure(text=texto)
+        self.dica_result.place(x=0, y=0, relwidth=1, relheight=1)
+
+    def _limpar_resultados(self):
+        for w in self.linhas.winfo_children():
+            w.destroy()
+        self.linhas_resultado = []
+        self.achados = []
+        self.escolhido = -1
+
+    def _ajustar_rolagem(self):
+        self.tela.configure(scrollregion=self.tela.bbox("all"))
+        precisa = self.linhas.winfo_reqheight() > self.tela.winfo_height() + 2
+        if precisa and not self.rolagem.winfo_ismapped():
+            self.rolagem.pack(side="right", fill="y", before=self.tela)
+        elif not precisa and self.rolagem.winfo_ismapped():
+            self.rolagem.pack_forget()
+
+    def _roda_do_mouse(self, evento):
+        alvo = self.winfo_containing(evento.x_root, evento.y_root)
+        while alvo is not None and alvo is not self.quadro_lista:
+            alvo = alvo.master
+        if alvo is not None and self.rolagem.winfo_ismapped():
+            self.tela.yview_scroll(int(-evento.delta / 120) or (-1 if evento.delta > 0 else 1), "units")
 
     def _pesquisar(self):
-        self._atualizar_dica()
-        lista = self.lista
-        lista.delete(*lista.get_children())
-        if self.modo_lista == "historico":
-            hist = ler_json(ARQ_HISTORICO, [])
-            self.historico = list(reversed(hist))[:200]
-            q = sem_acento(self.var_busca.get())
-            for i, h in enumerate(self.historico):
-                if q and q not in sem_acento(h.get("aluno", "")):
-                    continue
-                try:
-                    quando = datetime.fromisoformat(h["data"]).strftime("%d/%m/%Y %H:%M")
-                except (KeyError, ValueError):
-                    quando = ""
-                lista.insert("", "end", iid="h{}".format(i), tags=("par",) if i % 2 else (),
-                             values=(quando, "{:03d}".format(h["numero"]) if h.get("numero") else "—",
-                                     NOME_TIPO.get(h.get("tipo"), ""), h.get("aluno", "")))
-            n = len(lista.get_children())
-            self.rotulo_contagem.configure(text="{} declaração(ões)".format(n) if n else "Nenhuma declaração ainda")
+        if not self.alunos:
             return
-
         q = sem_acento(self.var_busca.get())
         termos = q.split()
-        if termos:
-            achados = [a for a in self.alunos if all(t in a["_chave"] for t in termos)]
-            achados.sort(key=lambda a: (not a["_chave"].startswith(q), a["_chave"]))
-        else:
-            achados = list(self.alunos)
-        self.achados = achados[:500]
+        self._limpar_resultados()
+        self.aluno = None               # pesquisa nova: escolhe de novo
+        self._mostrar_aluno()
+        if not termos:
+            self._mostrar_dica("Digite o nome do aluno (ou só uma parte dele) e clique em Pesquisar.")
+            self.entrada_busca.focus_set()
+            return
+        achados = [a for a in self.alunos if all(t in a["_chave"] for t in termos)]
+        achados.sort(key=lambda a: (not a["_chave"].startswith(q), a["_chave"]))
+        if not achados:
+            self._mostrar_dica("Nenhum aluno encontrado com “{}”.\nConfira a grafia ou digite só uma parte "
+                               "do nome (por exemplo, o primeiro nome e o último sobrenome).".format(self.var_busca.get().strip()))
+            self.var_status.set("Nenhum aluno encontrado.")
+            return
+        self.achados = achados[:100]
+        self.dica_result.place_forget()
+        self.vazio.place_forget()
+        self.quadro_lista.place(x=0, y=0, relwidth=1, relheight=1)
         for i, a in enumerate(self.achados):
-            turma = " – ".join(v for v in (a.get("serie"), a.get("turma") and "turma " + a["turma"]) if v)
-            lista.insert("", "end", iid=str(i), tags=("par",) if i % 2 else (),
-                         values=(a.get("social") or a.get("nome"), turma, data_br(a.get("nasc"))))
-        if not self.alunos:
-            self.rotulo_contagem.configure(text="")
-        elif termos:
-            self.rotulo_contagem.configure(
-                text="{} encontrado(s)".format(len(achados)) if achados else "Nenhum aluno com esse nome")
+            self._linha_resultado(i, a)
+        self.tela.yview_moveto(0)
+        self.after_idle(self._ajustar_rolagem)
+        if len(achados) == 1:
+            self._clicar_resultado(0)
+            self.var_status.set("1 aluno encontrado e escolhido. Escolha o tipo e clique em Gerar declaração.")
         else:
-            self.rotulo_contagem.configure(text="{} alunos em ordem alfabética".format(len(self.alunos)))
+            extra = " (mostrando os 100 primeiros)" if len(achados) > 100 else ""
+            self.var_status.set("{} alunos encontrados{}. Clique no aluno certo.".format(len(achados), extra))
 
-    def _descer_para_lista(self, _e=None):
-        filhos = self.lista.get_children()
-        if filhos:
-            self.lista.focus_set()
-            self.lista.selection_set(filhos[0])
-            self.lista.focus(filhos[0])
-        return "break"
+    def _linha_resultado(self, i, a):
+        linha = tk.Frame(self.linhas, bg=COR_LINHA, highlightthickness=1, highlightbackground=COR_BORDA,
+                         cursor="hand2")
+        linha.pack(fill="x", pady=(0, 4), padx=(0, 4))
+        nome = tk.Label(linha, text=a.get("social") or a.get("nome"), bg=COR_LINHA, fg=COR_TEXTO,
+                        font=(FONTE, 10, "bold"), anchor="w", cursor="hand2")
+        nome.pack(side="left", padx=(12, 10), pady=5)
+        partes = [" – ".join(v for v in (a.get("serie"), a.get("turma") and "turma " + a["turma"]) if v),
+                  a.get("nasc") and "nasc. " + data_br(a["nasc"]),
+                  a.get("matricula") and "cód. " + a["matricula"]]
+        detalhe = tk.Label(linha, text="   ·   ".join(p for p in partes if p), bg=COR_LINHA,
+                           fg=COR_TEXTO_FRACO, font=(FONTE, 9), anchor="w", cursor="hand2")
+        detalhe.pack(side="left")
+        seta = tk.Label(linha, text="Escolher  ›", bg=COR_LINHA, fg=COR_AZUL, font=(FONTE, 9, "bold"),
+                        cursor="hand2")
+        seta.pack(side="right", padx=12)
+        partes_linha = (linha, nome, detalhe, seta)
+        for w in partes_linha:
+            w.bind("<Button-1>", lambda e, n=i: self._clicar_resultado(n))
+            w.bind("<Double-1>", lambda e, n=i: (self._clicar_resultado(n), self._gerar()))
+            w.bind("<Enter>", lambda e, n=i: self._pintar_linha(n, sobre=True))
+            w.bind("<Leave>", lambda e, n=i: self._pintar_linha(n, sobre=False))
+        self.linhas_resultado.append(partes_linha)
 
-    def _escolher_primeiro(self):
-        filhos = self.lista.get_children()
-        if filhos:
-            self.lista.selection_set(filhos[0])
-            self.lista.see(filhos[0])
-
-    def _ao_selecionar(self, _e=None):
-        sel = self.lista.selection()
-        if not sel:
+    def _pintar_linha(self, n, sobre=False):
+        if n >= len(self.linhas_resultado):
             return
-        iid = sel[0]
-        if iid.startswith("h"):
-            h = self.historico[int(iid[1:])]
-            a = next((x for x in self.alunos if h.get("codigo") and x.get("matricula") == h["codigo"]), None) \
-                or next((x for x in self.alunos if (x.get("social") or x.get("nome")) == h.get("aluno")), None)
-            if a:
-                self._escolher(a)
-                if h.get("tipo") in NOME_TIPO:
-                    self.var_tipo.set(h["tipo"])
-            self.ultimo_arquivo = h.get("arquivo", "")
-            return
-        self._escolher(self.achados[int(iid)])
+        linha, nome, detalhe, seta = self.linhas_resultado[n]
+        if n == self.escolhido:
+            fundo, borda, texto_seta = "#DCE8FF", COR_AZUL, "✓  Escolhido"
+        elif sobre:
+            fundo, borda, texto_seta = "#EAF1FF", "#9DB6E6", "Escolher  ›"
+        else:
+            fundo, borda, texto_seta = COR_LINHA, COR_BORDA, "Escolher  ›"
+        linha.configure(bg=fundo, highlightbackground=borda)
+        for w in (nome, detalhe, seta):
+            w.configure(bg=fundo)
+        seta.configure(text=texto_seta, fg=COR_VERDE if n == self.escolhido else COR_AZUL)
 
-    def _ao_duplo_clique(self, _e=None):
-        sel = self.lista.selection()
-        if sel and sel[0].startswith("h"):
-            h = self.historico[int(sel[0][1:])]
-            if h.get("arquivo") and os.path.exists(h["arquivo"]):
-                abrir_arquivo(h["arquivo"])
-            else:
-                self.var_status.set("O arquivo dessa declaração não está mais na pasta.")
-        elif sel:
-            self._gerar()
-        return "break"
+    def _clicar_resultado(self, n):
+        anterior, self.escolhido = self.escolhido, n
+        if 0 <= anterior < len(self.linhas_resultado):
+            self._pintar_linha(anterior)
+        self._pintar_linha(n)
+        self._escolher(self.achados[n])
 
     def _escolher(self, a):
         self.aluno = {k: v for k, v in a.items() if not k.startswith("_")}
@@ -1467,7 +1477,7 @@ class Aplicacao(tk.Tk):
         a = self.aluno
         if not a:
             self.nome_aluno.configure(text="Nenhum aluno escolhido", fg=COR_TEXTO_FRACO)
-            self.info_aluno.configure(text="Pesquise ao lado e clique no nome do aluno.")
+            self.info_aluno.configure(text="Pesquise acima e clique no nome do aluno.")
             self.alerta_aluno.configure(text="")
             self.botao_corrigir.pack_forget()
             self.botao_gerar.definir_ativo(False)
@@ -1607,8 +1617,6 @@ class Aplicacao(tk.Tk):
         abrir_arquivo(arquivos[0])
         self.var_status.set("Declaração {}de {} gerada e aberta para imprimir: {}".format(
             numero_txt + " " if numero_txt else "", nome_aluno, os.path.basename(arquivos[0])))
-        if self.modo_lista == "historico":
-            self._pesquisar()
 
     def _abrir_pasta(self):
         pasta = os.path.dirname(self.ultimo_arquivo) if self.ultimo_arquivo else \
