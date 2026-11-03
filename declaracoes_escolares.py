@@ -32,7 +32,7 @@ import tkinter as tk
 import tkinter.font as tkfont
 from tkinter import ttk, filedialog, messagebox
 
-VERSAO_PROGRAMA = "1.2"
+VERSAO_PROGRAMA = "1.3"
 NOME_PROGRAMA = "Declarações Escolares"
 
 
@@ -203,7 +203,8 @@ def campo_do_titulo(titulo):
         return None
     if "nome social" in h:
         return "social"
-    if re.search(r"cod(igo)? (da )?turma|cod bai|bai of|cpf|\brg\b|sus|sangu|idade|e-?mail|\bnis\b|inep", h):
+    if re.search(r"cod(igo)? (da )?turma|cod bai|bai of|cpf|\brg\b|sus|sangu|idade|e-?mail|\bnis\b|inep|"
+                 r"ano letivo|exercicio|escola|unidade|municipio|cidade|\buf\b|situacao|data (da )?matricula", h):
         return "outro"
     if re.search(r"telefone|fone|celular|contato|whats", h):
         return "telefone2" if re.search(r"altern|recado|2|secund", h) else "telefone"
@@ -399,18 +400,66 @@ def ler_lista(texto):
         return []
     titulos = [campo_do_titulo(c) for c in corpo[0]]
     if "nome" in titulos or sum(1 for t in titulos if t) >= 2:
+        coluna = _escolher_colunas(corpo, titulos)
         alunos = []
         for c in corpo[1:]:
             a = {}
-            for t, valor in zip(titulos, c):
-                if t and t != "outro" and valor and t not in a:
-                    a[t] = valor
+            for t, i in coluna.items():
+                if i < len(c) and c[i]:
+                    a[t] = c[i]
             if "nome" not in titulos and c:
                 a["nome"] = c[0]
             alunos.append(normalizar(a))
         return [a for a in alunos if a["nome"]]
     return [a for a in (normalizar(_adivinhar(c)) for c in corpo)
             if a["nome"] and len(a["nome"]) > 2]
+
+
+def _escolher_colunas(corpo, titulos):
+    """
+    Quando mais de uma coluna parece ser o mesmo dado (ex.: 'Código do Aluno' e
+    outra coluna com 'código'), fica a que tem mais valores diferentes. Um código
+    igual para todos (como 2026) não é o código do aluno.
+    """
+    linhas = corpo[1:]
+    candidatas = {}
+    for i, t in enumerate(titulos):
+        if t and t != "outro":
+            candidatas.setdefault(t, []).append(i)
+
+    def valores(i):
+        return [l[i].strip() for l in linhas if i < len(l) and l[i].strip()]
+
+    confere = {
+        "serie": lambda x: bool(re.search(r"[A-Za-zº]", x)),          # '2026' não é fase
+        "nasc": lambda x: partes_data(x) is not None,
+        "sexo": lambda x: sem_acento(x)[:1] in ("m", "f"),
+        "matricula": lambda x: bool(re.search(r"\d", x)),
+        "nome": lambda x: bool(re.search(r"[A-Za-z]{2,}\s+[A-Za-z]", sem_acento(x))),
+        "mae": lambda x: bool(re.search(r"[A-Za-z]", x)),
+        "pai": lambda x: bool(re.search(r"[A-Za-z]", x)),
+    }
+
+    def proporcao(t, v):
+        f = confere.get(t)
+        return 1.0 if not f or not v else sum(1 for x in v if f(x)) / len(v)
+
+    escolha = {}
+    for t, idxs in candidatas.items():
+        def pontos(i):
+            v = valores(i)
+            titulo = sem_acento(corpo[0][i])
+            preferida = (t == "matricula" and bool(re.search(r"aluno|matric", titulo))) or \
+                        (t == "nome" and bool(re.search(r"aluno|estudante", titulo)))
+            return (proporcao(t, v) >= 0.5, len(set(v)) > 1, preferida, len(set(v)), len(v), -i)
+        melhor = max(idxs, key=pontos)
+        v = valores(melhor)
+        if v and proporcao(t, v) < 0.5:
+            continue                                  # o conteúdo não tem cara desse dado
+        if t == "matricula" and len(v) > 5 and len(set(v)) == 1:
+            continue                                  # mesmo valor para todos: não é código
+        escolha[t] = melhor
+    return escolha
 
 
 def ordem_serie(serie):
@@ -1412,8 +1461,8 @@ class Aplicacao(tk.Tk):
         campo(linha, "Motivo", e["motivo"], opcoes=[
             "atendimento na escola", "reunião de pais e mestres", "atendimento com a equipe pedagógica",
             "atendimento com a gestão escolar", "entrega de boletim"]).pack(side="left", fill="x", expand=True)
-        campo(linha, "Entrada", e["hora_ini"], largura=7).pack(side="left", padx=(8, 0))
-        campo(linha, "Saída", e["hora_fim"], largura=7).pack(side="left", padx=(8, 0))
+        campo(linha, "Entrada", e["hora_ini"], largura=9).pack(side="left", padx=(8, 0))
+        campo(linha, "Saída", e["hora_fim"], largura=9).pack(side="left", padx=(8, 0))
         self.extras["comparecimento"] = f
 
     def _mostrar_extras(self):
