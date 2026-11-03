@@ -32,7 +32,7 @@ import tkinter as tk
 import tkinter.font as tkfont
 from tkinter import ttk, filedialog, messagebox
 
-VERSAO_PROGRAMA = "1.1"
+VERSAO_PROGRAMA = "1.2"
 NOME_PROGRAMA = "Declarações Escolares"
 
 
@@ -94,9 +94,13 @@ CONFIG_PADRAO = {
     "uf": "AM",
     "telefone": "",
     "email": "",
-    "assinante": "",
-    "cargo": "Gestor(a) Escolar",
-    "registro": "",
+    "gestor_nome": "",
+    "gestor_cargo": "Gestor(a) Escolar",
+    "gestor_registro": "",
+    "secretario_nome": "",
+    "secretario_cargo": "Secretário(a) Escolar",
+    "secretario_registro": "",
+    "assina": "gestor",
     "numero": 1,
     "numerar": True,
     "pdf": True,
@@ -199,13 +203,22 @@ def campo_do_titulo(titulo):
         return None
     if "nome social" in h:
         return "social"
-    if re.search(r"cod(igo)? (da )?turma|bai of|bairro|endereco|cep|telefone|fone|"
-                 r"cel|cpf|\brg\b|sus|sangu|idade|email|responsavel", h):
+    if re.search(r"cod(igo)? (da )?turma|cod bai|bai of|cpf|\brg\b|sus|sangu|idade|e-?mail|\bnis\b|inep", h):
         return "outro"
+    if re.search(r"telefone|fone|celular|contato|whats", h):
+        return "telefone2" if re.search(r"altern|recado|2|secund", h) else "telefone"
+    if re.search(r"endereco|logradouro", h):
+        return "endereco"
+    if "bairro" in h:
+        return "bairro"
+    if h.startswith("cep"):
+        return "cep"
     if re.search(r"\bmae\b|filiacao ?1|genitora", h):
         return "mae"
     if re.search(r"\bpai\b|filiacao ?2|genitor\b", h):
         return "pai"
+    if "responsavel" in h:
+        return "responsavel"
     if re.search(r"nasc|^dn$", h):
         return "nasc"
     if re.fullmatch(r"sexo|genero", h):
@@ -223,6 +236,36 @@ def campo_do_titulo(titulo):
     if re.search(r"nome|aluno|aluna|estudante", h):
         return "nome"
     return None
+
+
+def formatar_fone(valor):
+    numeros = re.sub(r"\D", "", str(valor or ""))
+    if not numeros or set(numeros) == {"0"}:
+        return ""
+    if len(numeros) == 11:
+        return "({}) {}-{}".format(numeros[:2], numeros[2:7], numeros[7:])
+    if len(numeros) == 10:
+        return "({}) {}-{}".format(numeros[:2], numeros[2:6], numeros[6:])
+    if len(numeros) == 9:
+        return "{}-{}".format(numeros[:5], numeros[5:])
+    if len(numeros) == 8:
+        return "{}-{}".format(numeros[:4], numeros[4:])
+    return str(valor).strip()
+
+
+def limpar_endereco(valor):
+    """'Rua RUA ANDORRA,13,CASA -CIDADE NOVA 2 -MANAUS' -> 'Rua Andorra, 13, Casa – Cidade Nova 2 – Manaus'."""
+    s = re.sub(r"\s+", " ", str(valor or "")).strip()
+    if not s:
+        return ""
+    s = re.sub(r"^(\w+)(\.?)\s+\1\.?(?=\s)", r"\1\2", s, flags=re.I)
+    s = re.sub(r"\s*,\s*", ", ", s)
+    s = re.sub(r"\s+-\s*|\s*-\s+", " – ", s)
+    letras = [c for c in s if c.isalpha()]
+    if letras and sum(c.isupper() for c in letras) > 0.7 * len(letras):
+        s = " ".join(p.lower() if (i and p.lower() in PARTICULAS) else p[:1].upper() + p[1:].lower()
+                     for i, p in enumerate(s.split(" ")))
+    return s.strip(" ,–")
 
 
 def etapa_da_serie(serie):
@@ -249,6 +292,12 @@ def normalizar(a):
         "mae": nome_proprio(a.get("mae")), "pai": nome_proprio(a.get("pai")),
         "serie": "", "etapa": "",
         "turma": str(a.get("turma") or "").strip(), "turno": "",
+        "responsavel": nome_proprio(a.get("responsavel")),
+        "endereco": limpar_endereco(a.get("endereco")),
+        "bairro": nome_proprio(a.get("bairro")),
+        "cep": str(a.get("cep") or "").strip(),
+        "telefone": formatar_fone(a.get("telefone")),
+        "telefone2": formatar_fone(a.get("telefone2")),
     }
     sx = sem_acento(a.get("sexo"))[:1]
     r["sexo"] = "F" if sx == "f" else "M" if sx == "m" else ""
@@ -410,10 +459,10 @@ ETAPAS = {
 def genero(sexo):
     s = str(sexo or "").strip().upper()[:1]
     if s == "F":
-        return {"o": "a", "art": "a", "aluno": "aluna", "pelo": "pela", "Art": "A"}
+        return {"o": "a", "art": "a", "aluno": "aluna", "pelo": "pela", "do": "da", "Art": "A"}
     if s == "M":
-        return {"o": "o", "art": "o", "aluno": "aluno", "pelo": "pelo", "Art": "O"}
-    return {"o": "o(a)", "art": "o(a)", "aluno": "aluno(a)", "pelo": "pelo(a)", "Art": "O(A)"}
+        return {"o": "o", "art": "o", "aluno": "aluno", "pelo": "pelo", "do": "do", "Art": "O"}
+    return {"o": "o(a)", "art": "o(a)", "aluno": "aluno(a)", "pelo": "pelo(a)", "do": "do(a)", "Art": "O(A)"}
 
 
 def _curso(a, prep):
@@ -516,7 +565,13 @@ def paragrafos(tipo, a, extras, ano_letivo):
         meio = ""
         if x.get("resp_cpf"):
             meio += ", CPF nº " + x["resp_cpf"]
-        meio += ", responsável {} {} ".format(g["pelo"], g["aluno"])
+        parentesco = x.get("parentesco")
+        if parentesco == "mae":
+            meio += ", mãe {} {} ".format(g["do"], g["aluno"])
+        elif parentesco == "pai":
+            meio += ", pai {} {} ".format(g["do"], g["aluno"])
+        else:
+            meio += ", responsável {} {} ".format(g["pelo"], g["aluno"])
         f += [(meio, False), (nome_aluno, True)]
         fim = ""
         if a.get("matricula"):
@@ -524,7 +579,9 @@ def paragrafos(tipo, a, extras, ano_letivo):
         fim += ", matriculad{} {}{}, compareceu a esta Unidade de Ensino no dia {}".format(
             o, _curso(a, "no"), _turma_turno(a), hoje_br())
         if x.get("hora_ini") and x.get("hora_fim"):
-            fim += ", das {} às {}".format(hora_texto(x["hora_ini"]), hora_texto(x["hora_fim"]))
+            fim += ", com entrada às {} e saída às {}".format(hora_texto(x["hora_ini"]), hora_texto(x["hora_fim"]))
+        elif x.get("hora_ini"):
+            fim += ", às {}".format(hora_texto(x["hora_ini"]))
         if x.get("motivo"):
             fim += ", para " + x["motivo"]
         f.append((fim + ".", False))
@@ -1095,7 +1152,12 @@ class Aplicacao(tk.Tk):
         self.configure(bg=COR_FUNDO)
 
         self.cfg = dict(CONFIG_PADRAO)
-        self.cfg.update(ler_json(ARQ_CONFIG, {}))
+        salvo = ler_json(ARQ_CONFIG, {})
+        self.cfg.update(salvo)
+        if "gestor_nome" not in salvo and salvo.get("assinante"):    # configuração da versão 1.0
+            self.cfg["gestor_nome"] = salvo.get("assinante", "")
+            self.cfg["gestor_cargo"] = salvo.get("cargo") or "Gestor(a) Escolar"
+            self.cfg["gestor_registro"] = salvo.get("registro", "")
         banco = ler_json(ARQ_ALUNOS, {})
         self.alunos = banco.get("alunos", []) if isinstance(banco, dict) else []
         self.origem = banco.get("origem", "") if isinstance(banco, dict) else ""
@@ -1113,7 +1175,9 @@ class Aplicacao(tk.Tk):
         self.var_status = tk.StringVar()
         self.ext = {k: tk.StringVar() for k in (
             "freq", "situacao", "destino", "prazo", "resultado", "proxima", "validade",
-            "resp_nome", "resp_cpf", "hora_ini", "hora_fim", "motivo")}
+            "resp_nome", "resp_cpf", "hora_ini", "hora_fim", "motivo", "parentesco")}
+        self.ext["parentesco"].set("Mãe")
+        self.var_assina = tk.StringVar(value=self.cfg.get("assina") or "gestor")
         self.ext["prazo"].set("30")
         self.ext["validade"].set("5")
         self.ext["situacao"].set("Estava cursando")
@@ -1124,6 +1188,8 @@ class Aplicacao(tk.Tk):
         self._montar_interface()
         self.var_busca.trace_add("write", lambda *_: self._atualizar_dica())
         self.var_tipo.trace_add("write", lambda *_: self._mostrar_extras())
+        self.var_assina.trace_add("write", lambda *_: self._ao_mudar_assinatura())
+        self.ext["parentesco"].trace_add("write", lambda *_: self._ao_mudar_parentesco())
         self._atualizar_banco()
         self._mostrar_extras()
         self._mostrar_aluno()
@@ -1177,8 +1243,8 @@ class Aplicacao(tk.Tk):
         self._montar_cabecalho()
         corpo = tk.Frame(self, bg=COR_FUNDO)
         corpo.pack(fill="both", expand=True, padx=26, pady=(18, 16))
-        corpo.columnconfigure(0, weight=1, uniform="col")
-        corpo.columnconfigure(1, weight=1, uniform="col")
+        corpo.columnconfigure(0, weight=4, uniform="col")
+        corpo.columnconfigure(1, weight=5, uniform="col")
         corpo.rowconfigure(1, weight=1)
 
         # 1 - Pesquisar aluno ------------------------------------------------
@@ -1243,18 +1309,17 @@ class Aplicacao(tk.Tk):
         # 2 - Aluno escolhido -------------------------------------------------
         externo, c2, self.canto_aluno = cartao(corpo, "Aluno", 2)
         externo.grid(row=1, column=0, sticky="nsew", padx=(0, 8), pady=(0, 12))
+        self.botao_corrigir = Botao(self.canto_aluno, "Corrigir", self._corrigir_aluno,
+                                    estilo="tracejado", fonte=(FONTE, 9, "bold"), pad_y=3, pad_x=10, raio=8)
         self.nome_aluno = tk.Label(c2, text="", bg=COR_CARTAO, fg=COR_AZUL_ESCURO, font=(FONTE, 12, "bold"),
-                                   anchor="w", justify="left", wraplength=400)
+                                   anchor="w", justify="left", wraplength=340)
         self.nome_aluno.pack(fill="x")
-        self.info_aluno = tk.Label(c2, text="", bg=COR_CARTAO, fg=COR_TEXTO, font=(FONTE, 9),
-                                   anchor="w", justify="left")
-        self.info_aluno.pack(fill="x", pady=(2, 0))
+        self.info_aluno = tk.Frame(c2, bg=COR_CARTAO)
+        self.info_aluno.pack(fill="x", pady=(4, 0))
+        self.info_aluno.columnconfigure(1, weight=1)
         self.alerta_aluno = tk.Label(c2, text="", bg=COR_CARTAO, fg=COR_LARANJA, font=(FONTE, 9, "bold"),
-                                     anchor="w", justify="left", wraplength=400)
+                                     anchor="w", justify="left", wraplength=340)
         self.alerta_aluno.pack(fill="x", pady=(4, 0))
-        self.botao_corrigir = Botao(c2, "Corrigir dados do aluno", self._corrigir_aluno,
-                                    estilo="tracejado", pad_y=5, pad_x=12)
-        self.botao_corrigir.pack(anchor="w", pady=(8, 0))
 
         # 3 - Tipo de declaração ---------------------------------------------
         externo, c3, _ = cartao(corpo, "Tipo de declaração", 3)
@@ -1262,21 +1327,29 @@ class Aplicacao(tk.Tk):
         grade = tk.Frame(c3, bg=COR_CARTAO)
         grade.pack(fill="x")
         for i, (chave, nome, _t) in enumerate(TIPOS):
-            Chip(grade, nome, self.var_tipo, chave, largura=150).grid(
-                row=i // 2, column=i % 2, sticky="w", padx=(0, 8), pady=(0, 6))
+            Chip(grade, nome, self.var_tipo, chave).grid(
+                row=i // 3, column=i % 3, sticky="w", padx=(0, 6), pady=(0, 6))
         self.area_extras = tk.Frame(c3, bg=COR_CARTAO)
-        self.area_extras.pack(fill="both", expand=True, pady=(6, 0))
+        self.area_extras.pack(fill="both", expand=True, pady=(4, 0))
         self._montar_extras()
 
         # Ação ---------------------------------------------------------------
         acao = tk.Frame(corpo, bg=COR_FUNDO)
         acao.grid(row=2, column=0, columnspan=2, sticky="ew")
+        assina = tk.Frame(acao, bg=COR_FUNDO)
+        assina.pack(side="left", padx=(0, 12))
+        tk.Label(assina, text="Quem assina", bg=COR_FUNDO, fg=COR_TEXTO_FRACO,
+                 font=(FONTE, 9, "bold")).pack(anchor="w")
+        chips = tk.Frame(assina, bg=COR_FUNDO)
+        chips.pack(anchor="w")
+        Chip(chips, "Gestor(a)", self.var_assina, "gestor").pack(side="left", padx=(0, 6))
+        Chip(chips, "Secretário(a)", self.var_assina, "secretario").pack(side="left")
         self.botao_gerar = Botao(acao, "▶   Gerar declaração", self._gerar, estilo="principal",
                                  fonte=(FONTE, 14, "bold"), pad_y=11, raio=12)
-        self.botao_gerar.pack(side="left", fill="x", expand=True)
+        self.botao_gerar.pack(side="left", fill="x", expand=True, pady=(4, 0))
         self.botao_abrir = Botao(acao, "Abrir pasta", self._abrir_pasta, estilo="suave",
                                  pad_x=24, pad_y=11, raio=12)
-        self.botao_abrir.pack(side="left", padx=(10, 0))
+        self.botao_abrir.pack(side="left", padx=(10, 0), pady=(4, 0))
         tk.Label(corpo, textvariable=self.var_status, bg=COR_FUNDO, fg=COR_TEXTO_FRACO,
                  font=(FONTE, 9), anchor="w").grid(row=3, column=0, columnspan=2, sticky="ew", pady=(10, 0))
 
@@ -1313,13 +1386,20 @@ class Aplicacao(tk.Tk):
         self.extras["vaga"] = f
 
         f = tk.Frame(self.area_extras, bg=COR_CARTAO)
-        f.columnconfigure(0, weight=1)
-        campo(f, "Quem compareceu", e["resp_nome"]).grid(row=0, column=0, columnspan=3, sticky="ew")
-        campo(f, "Das", e["hora_ini"], largura=7).grid(row=1, column=1, sticky="w", pady=(6, 0), padx=(0, 6))
-        campo(f, "Às", e["hora_fim"], largura=7).grid(row=1, column=2, sticky="w", pady=(6, 0))
-        campo(f, "Motivo", e["motivo"], opcoes=[
+        linha = tk.Frame(f, bg=COR_CARTAO)
+        linha.pack(fill="x")
+        self.combo_parentesco = campo(linha, "Declaração para", e["parentesco"],
+                                      opcoes=["Mãe", "Pai", "Responsável", "Outra pessoa"], editavel=False, largura=13)
+        self.combo_parentesco.pack(side="left", padx=(0, 8))
+        self.campo_resp = campo(linha, "Nome de quem compareceu", e["resp_nome"])
+        self.campo_resp.pack(side="left", fill="x", expand=True)
+        linha = tk.Frame(f, bg=COR_CARTAO)
+        linha.pack(fill="x", pady=(6, 0))
+        campo(linha, "Motivo", e["motivo"], opcoes=[
             "atendimento na escola", "reunião de pais e mestres", "atendimento com a equipe pedagógica",
-            "atendimento com a gestão escolar", "entrega de boletim"]).grid(row=1, column=0, sticky="ew", pady=(6, 0), padx=(0, 6))
+            "atendimento com a gestão escolar", "entrega de boletim"]).pack(side="left", fill="x", expand=True)
+        campo(linha, "Entrada", e["hora_ini"], largura=7).pack(side="left", padx=(8, 0))
+        campo(linha, "Saída", e["hora_fim"], largura=7).pack(side="left", padx=(8, 0))
         self.extras["comparecimento"] = f
 
     def _mostrar_extras(self):
@@ -1465,7 +1545,7 @@ class Aplicacao(tk.Tk):
         self.aluno = {k: v for k, v in a.items() if not k.startswith("_")}
         agora = datetime.now()
         self.ext["proxima"].set(proxima_serie(a.get("serie")))
-        self.ext["resp_nome"].set(a.get("mae") or a.get("pai") or "")
+        self._parentesco_padrao(a)
         self.ext["hora_fim"].set(agora.strftime("%H:%M"))
         self.ext["hora_ini"].set("{:02d}:{:02d}".format(max(agora.hour - 1, 0), agora.minute))
         self.ext["freq"].set("")
@@ -1473,33 +1553,79 @@ class Aplicacao(tk.Tk):
         self._mostrar_aluno()
         self.var_status.set("Escolha o tipo de declaração e clique em Gerar declaração.")
 
+    def _parentesco_padrao(self, a):
+        if a.get("mae"):
+            escolha = "Mãe"
+        elif a.get("pai"):
+            escolha = "Pai"
+        elif a.get("responsavel"):
+            escolha = "Responsável"
+        else:
+            escolha = "Outra pessoa"
+        if self.ext["parentesco"].get() == escolha:
+            self._ao_mudar_parentesco()
+        else:
+            self.ext["parentesco"].set(escolha)
+
+    def _ao_mudar_parentesco(self):
+        a = self.aluno or {}
+        escolha = self.ext["parentesco"].get()
+        nome = {"Mãe": a.get("mae"), "Pai": a.get("pai"), "Responsável": a.get("responsavel")}.get(escolha, "")
+        self.ext["resp_nome"].set(nome or "")
+        if not nome and self.aluno:
+            self.campo_resp.entrada.focus_set()
+
+    def _ao_mudar_assinatura(self):
+        quem = self.var_assina.get()
+        self.cfg["assina"] = quem
+        gravar_json(ARQ_CONFIG, self.cfg)
+        if not self.cfg.get(quem + "_nome"):
+            self.var_status.set("O nome do {} ainda não foi cadastrado na Configuração; a declaração sai só "
+                                "com a linha para assinatura.".format("gestor(a)" if quem == "gestor" else "secretário(a)"))
+
     def _mostrar_aluno(self):
         a = self.aluno
         if not a:
             self.nome_aluno.configure(text="Nenhum aluno escolhido", fg=COR_TEXTO_FRACO)
-            self.info_aluno.configure(text="Pesquise acima e clique no nome do aluno.")
+            for w in self.info_aluno.winfo_children():
+                w.destroy()
+            tk.Label(self.info_aluno, text="Pesquise acima e clique no nome do aluno.", bg=COR_CARTAO,
+                     fg=COR_TEXTO, font=(FONTE, 9)).grid(row=0, column=0, sticky="w")
             self.alerta_aluno.configure(text="")
             self.botao_corrigir.pack_forget()
             self.botao_gerar.definir_ativo(False)
             return
         self.nome_aluno.configure(text=a.get("social") or a.get("nome"), fg=COR_AZUL_ESCURO)
-        linhas = []
+        for w in self.info_aluno.winfo_children():
+            w.destroy()
+        itens = []
         turma = " · ".join(v for v in (a.get("serie"), a.get("turma") and "Turma " + a["turma"], a.get("turno")) if v)
-        if turma:
-            linhas.append(turma)
+        itens.append(("Turma", turma))
         if a.get("nasc"):
             anos = idade(a["nasc"])
-            linhas.append("Nascimento: {}{}".format(data_br(a["nasc"]), " ({} anos)".format(anos) if anos is not None else ""))
-        if a.get("matricula"):
-            linhas.append("Código do aluno: " + a["matricula"])
-        if a.get("sexo"):
-            linhas.append("Sexo: " + ("Feminino" if a["sexo"] == "F" else "Masculino"))
-        if a.get("mae"):
-            linhas.append("Mãe: " + a["mae"])
-        self.info_aluno.configure(text="\n".join(linhas))
+            itens.append(("Nascimento", "{}{}".format(data_br(a["nasc"]), " ({} anos)".format(anos) if anos is not None else "")))
+        sexo = {"F": "Feminino", "M": "Masculino"}.get(a.get("sexo"), "")
+        itens.append(("Código", "   ·   ".join(v for v in (a.get("matricula"), sexo) if v)))
+        itens.append(("Mãe", a.get("mae")))
+        itens.append(("Pai", a.get("pai")))
+        if a.get("responsavel") and a["responsavel"] not in (a.get("mae"), a.get("pai")):
+            itens.append(("Responsável", a["responsavel"]))
+        endereco = a.get("endereco", "")
+        if a.get("bairro") and sem_acento(a["bairro"]) not in sem_acento(endereco):
+            endereco = " – ".join(v for v in (endereco, a["bairro"]) if v)
+        if a.get("cep"):
+            endereco += ("   ·   " if endereco else "") + "CEP " + a["cep"]
+        itens.append(("Endereço", endereco))
+        itens.append(("Telefone", "   ·   ".join(v for v in (a.get("telefone"), a.get("telefone2")) if v)))
+        for i, (titulo, valor) in enumerate(itens):
+            tk.Label(self.info_aluno, text=titulo, bg=COR_CARTAO, fg=COR_TEXTO_FRACO, font=(FONTE, 9, "bold"),
+                     anchor="nw").grid(row=i, column=0, sticky="nw", padx=(0, 10), pady=1)
+            tk.Label(self.info_aluno, text=valor or "não consta no arquivo", bg=COR_CARTAO,
+                     fg=COR_TEXTO if valor else "#A0A8B8", font=(FONTE, 9), anchor="nw", justify="left",
+                     wraplength=270).grid(row=i, column=1, sticky="nw", pady=1)
         faltam = [n for n, k in (("sexo", "sexo"), ("fase/ano", "serie"), ("nascimento", "nasc")) if not a.get(k)]
-        self.alerta_aluno.configure(text="Faltou na lista: " + ", ".join(faltam) + "." if faltam else "")
-        self.botao_corrigir.pack(anchor="w", pady=(8, 0))
+        self.alerta_aluno.configure(text="Faltou na lista: " + ", ".join(faltam) + ". Use “Corrigir”." if faltam else "")
+        self.botao_corrigir.pack(side="right")
         self.botao_gerar.definir_ativo(True)
 
     # -- correção dos dados do aluno ----------------------------------------
@@ -1516,7 +1642,8 @@ class Aplicacao(tk.Tk):
         externo.pack(fill="both", expand=True, padx=18, pady=18)
         a = self.aluno
         vars_ = {k: tk.StringVar(value=a.get(k, "")) for k in
-                 ("nome", "social", "matricula", "nasc", "mae", "pai", "serie", "turma", "turno")}
+                 ("nome", "social", "matricula", "nasc", "mae", "pai", "responsavel", "serie", "turma", "turno",
+                  "endereco", "telefone", "telefone2")}
         vars_["nasc"].set(data_br(a.get("nasc")))
         sexo = tk.StringVar(value={"F": "Feminino", "M": "Masculino"}.get(a.get("sexo"), "Não informado"))
         g = tk.Frame(c, bg=COR_CARTAO)
@@ -1526,13 +1653,15 @@ class Aplicacao(tk.Tk):
         itens = [("Nome completo", "nome", 0, 0, 2), ("Nome social", "social", 1, 0, 1),
                  ("Código do aluno", "matricula", 1, 1, 1), ("Nascimento (dd/mm/aaaa)", "nasc", 2, 0, 1),
                  ("Fase / ano", "serie", 3, 0, 1), ("Turma", "turma", 3, 1, 1),
-                 ("Mãe", "mae", 4, 0, 2), ("Pai", "pai", 5, 0, 2)]
+                 ("Mãe", "mae", 4, 0, 1), ("Pai", "pai", 4, 1, 1), ("Responsável", "responsavel", 5, 0, 1),
+                 ("Endereço", "endereco", 6, 0, 2), ("Telefone", "telefone", 7, 0, 1),
+                 ("Outro telefone", "telefone2", 7, 1, 1)]
         for titulo, k, lin, col, span in itens:
             campo(g, titulo, vars_[k]).grid(row=lin, column=col, columnspan=span, sticky="ew", padx=4, pady=4)
         campo(g, "Sexo", sexo, opcoes=["Feminino", "Masculino", "Não informado"], editavel=False).grid(
             row=2, column=1, sticky="ew", padx=4, pady=4)
         campo(g, "Turno", vars_["turno"], opcoes=["", "Matutino", "Vespertino", "Noturno", "Integral"],
-              editavel=False).grid(row=6, column=0, sticky="ew", padx=4, pady=4)
+              editavel=False).grid(row=5, column=1, sticky="ew", padx=4, pady=4)
         rotulo(c, "A correção vale só para esta declaração; o banco de dados não muda.",
                fraco=True, tam=9).pack(anchor="w", pady=(8, 0))
 
@@ -1545,6 +1674,7 @@ class Aplicacao(tk.Tk):
             self.aluno.update(novo)
             self.ext["proxima"].set(proxima_serie(novo["serie"]))
             self._mostrar_aluno()
+            self._ao_mudar_parentesco()
             janela.destroy()
 
         botoes = tk.Frame(c, bg=COR_CARTAO)
@@ -1560,6 +1690,7 @@ class Aplicacao(tk.Tk):
         e["situacao"] = {"Estava cursando": "cursando", "Aprovado(a)": "aprovado",
                          "Reprovado(a)": "reprovado"}.get(e["situacao"], "")
         e["resultado"] = "conselho" if "Conselho" in e["resultado"] else "aprovado"
+        e["parentesco"] = {"Mãe": "mae", "Pai": "pai"}.get(e["parentesco"], "responsavel")
         return e
 
     def _gerar(self):
@@ -1569,6 +1700,10 @@ class Aplicacao(tk.Tk):
         cfg = self.cfg
         if not cfg.get("pdf") and not cfg.get("word"):
             cfg["pdf"] = True
+        quem = self.var_assina.get()
+        doc = dict(cfg, assinante=cfg.get(quem + "_nome", ""),
+                   cargo=cfg.get(quem + "_cargo") or ("Gestor(a) Escolar" if quem == "gestor" else "Secretário(a) Escolar"),
+                   registro=cfg.get(quem + "_registro", ""))
         tipo = self.var_tipo.get()
         agora = datetime.now()
         numero = int(cfg.get("numero") or 1) if cfg.get("numerar", True) else None
@@ -1592,11 +1727,11 @@ class Aplicacao(tk.Tk):
         try:
             if cfg.get("pdf"):
                 caminho = os.path.join(pasta, base + ".pdf")
-                gerar_pdf(caminho, cfg, tipo, paras, numero_txt, logo)
+                gerar_pdf(caminho, doc, tipo, paras, numero_txt, logo)
                 arquivos.append(caminho)
             if cfg.get("word"):
                 caminho = os.path.join(pasta, base + ".docx")
-                gerar_word(caminho, cfg, tipo, paras, numero_txt, logo)
+                gerar_word(caminho, doc, tipo, paras, numero_txt, logo)
                 arquivos.append(caminho)
         except PermissionError:
             messagebox.showerror(NOME_PROGRAMA, "O arquivo está aberto em outro programa. "
@@ -1655,8 +1790,10 @@ class JanelaConfiguracao(tk.Toplevel):
               ("Nome da escola", "escola", 2, 0, 2), ("Código INEP", "inep", 3, 0, 1),
               ("Telefone", "telefone", 3, 1, 1), ("Endereço", "endereco", 4, 0, 2),
               ("Cidade", "cidade", 5, 0, 1), ("UF", "uf", 5, 1, 1), ("E-mail", "email", 6, 0, 2),
-              ("Quem assina", "assinante", 7, 0, 1), ("Cargo", "cargo", 7, 1, 1),
-              ("Matrícula / Portaria de quem assina", "registro", 8, 0, 2)]
+              ("Gestor(a): nome", "gestor_nome", 0, 0, 0), ("Cargo", "gestor_cargo", 0, 0, 0),
+              ("Matrícula / Portaria", "gestor_registro", 0, 0, 0),
+              ("Secretário(a): nome", "secretario_nome", 0, 0, 0), ("Cargo", "secretario_cargo", 0, 0, 0),
+              ("Matrícula / Portaria", "secretario_registro", 0, 0, 0)]
 
     def __init__(self, app):
         super().__init__(app)
@@ -1664,7 +1801,7 @@ class JanelaConfiguracao(tk.Toplevel):
         self.title("Configuração – " + NOME_PROGRAMA)
         self.configure(bg=COR_FUNDO)
         self.transient(app)
-        largura, altura = 900, min(700, app.winfo_screenheight() - 80)
+        largura, altura = 900, min(760, app.winfo_screenheight() - 80)
         self.geometry("{}x{}+{}+{}".format(largura, altura, app.winfo_rootx() + 30, max(app.winfo_rooty() - 20, 0)))
         self.minsize(820, 560)
         cfg = app.cfg
@@ -1687,7 +1824,8 @@ class JanelaConfiguracao(tk.Toplevel):
         externo.grid(row=0, column=0, sticky="nsew", padx=(0, 8), pady=(0, 12))
         self.marca = tk.Label(self.canto_banco, text="", bg=COR_CARTAO, fg=COR_VERDE, font=(FONTE, 10, "bold"))
         self.marca.pack()
-        rotulo(c, "Arquivo TXT de alunos exportado do sistema da SEMED.", fraco=True, tam=9).pack(anchor="w")
+        rotulo(c, "Arquivo TXT de alunos do sistema da SEMED. Um arquivo novo substitui o anterior.",
+               fraco=True, tam=9, wraplength=360, justify="left").pack(anchor="w")
         self.linha_banco = tk.Label(c, text="", bg=COR_LINHA, fg=COR_TEXTO, font=(FONTE, 9, "bold"),
                                     anchor="w", justify="left", highlightthickness=1,
                                     highlightbackground=COR_BORDA, padx=10, pady=8)
@@ -1713,23 +1851,24 @@ class JanelaConfiguracao(tk.Toplevel):
         Botao(linha, "Escolher...", self._escolher_pasta, pad_y=5, pad_x=12).pack(side="left", padx=(8, 0), pady=(18, 0))
 
         # 2 - Dados da escola
-        externo, c, _ = cartao(corpo, "Dados da escola (cabeçalho, rodapé e assinatura)", 2)
+        externo, c, _ = cartao(corpo, "Dados da escola e de quem assina", 2)
         externo.grid(row=1, column=0, columnspan=2, sticky="nsew", pady=(0, 12))
         g = tk.Frame(c, bg=COR_CARTAO)
         g.pack(fill="both", expand=True)
         posicoes = {"cab1": (0, 0, 2), "cab2": (0, 2, 2), "escola": (1, 0, 3), "inep": (1, 3, 1),
                     "endereco": (2, 0, 2), "cidade": (2, 2, 1), "uf": (2, 3, 1),
-                    "telefone": (3, 0, 1), "email": (3, 1, 1), "assinante": (3, 2, 2),
-                    "cargo": (4, 0, 1), "registro": (4, 1, 1)}
+                    "telefone": (3, 0, 1), "email": (3, 1, 1),
+                    "gestor_nome": (4, 0, 2), "gestor_cargo": (4, 2, 1), "gestor_registro": (4, 3, 1),
+                    "secretario_nome": (5, 0, 2), "secretario_cargo": (5, 2, 1), "secretario_registro": (5, 3, 1)}
         for col in range(4):
             g.columnconfigure(col, weight=1, uniform="g")
         for titulo, k, *_ in self.CAMPOS:
             lin, col, span = posicoes[k]
-            campo(g, titulo, self.vars[k], opcoes=["Gestor(a) Escolar", "Secretário(a) Escolar",
-                                                    "Pedagogo(a)", "Diretor(a)"] if k == "cargo" else None
+            campo(g, titulo, self.vars[k], opcoes=["Gestor(a) Escolar", "Secretário(a) Escolar", "Diretor(a)",
+                                                    "Pedagogo(a)"] if k.endswith("_cargo") else None
                   ).grid(row=lin, column=col, columnspan=span, sticky="ew", padx=4, pady=3)
         logo = tk.Frame(g, bg=COR_CARTAO)
-        logo.grid(row=4, column=2, columnspan=2, sticky="sew", padx=4, pady=3)
+        logo.grid(row=3, column=2, columnspan=2, sticky="sew", padx=4, pady=3)
         tk.Label(logo, text="Logotipo (opcional)", bg=COR_CARTAO, fg=COR_TEXTO_FRACO,
                  font=(FONTE, 9, "bold"), anchor="w").pack(anchor="w")
         linha = tk.Frame(logo, bg=COR_CARTAO)
@@ -1755,7 +1894,9 @@ class JanelaConfiguracao(tk.Toplevel):
                 series[a.get("serie") or "sem fase"] = series.get(a.get("serie") or "sem fase", 0) + 1
             resumo = " · ".join("{} no {}".format(n, s) for s, n in sorted(series.items(), key=lambda x: ordem_serie(x[0])))
             self.marca.configure(text="✓  {} alunos".format(len(app.alunos)))
-            self.linha_banco.configure(text="{}\n{}".format(app.origem or "arquivo importado", resumo))
+            com_pais = sum(1 for a in app.alunos if a.get("mae") or a.get("pai"))
+            self.linha_banco.configure(text="{}\n{}\nCom nome da mãe ou do pai: {} de {}".format(
+                app.origem or "arquivo importado", resumo, com_pais, len(app.alunos)))
         else:
             self.marca.configure(text="")
             self.linha_banco.configure(text="Nenhum arquivo aberto ainda.")
@@ -1821,6 +1962,8 @@ class JanelaConfiguracao(tk.Toplevel):
         cfg["pdf"] = bool(self.var_pdf.get()) or not self.var_word.get()
         cfg["word"] = bool(self.var_word.get())
         cfg["pasta_saida"] = self.var_pasta.get().strip()
+        for velho in ("assinante", "cargo", "registro"):
+            cfg.pop(velho, None)
         gravar_json(ARQ_CONFIG, cfg)
         self.app.configuracao_salva()
         self.destroy()
