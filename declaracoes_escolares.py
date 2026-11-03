@@ -32,7 +32,7 @@ import tkinter as tk
 import tkinter.font as tkfont
 from tkinter import ttk, filedialog, messagebox
 
-VERSAO_PROGRAMA = "1.4"
+VERSAO_PROGRAMA = "1.5"
 NOME_PROGRAMA = "Declarações Escolares"
 
 
@@ -505,6 +505,10 @@ ETAPAS = {
 }
 
 
+# Declarações que não levam "filho(a) de ..." (nome da mãe e do pai)
+SEM_FILIACAO = {"matricula"}
+
+
 def genero(sexo):
     s = str(sexo or "").strip().upper()[:1]
     if s == "F":
@@ -553,6 +557,8 @@ def paragrafos(tipo, a, extras, ano_letivo):
     if a.get("nasc"):
         resto += ", nascid{} em {}".format(o, data_br(a["nasc"]))
     mae, pai = a.get("mae"), a.get("pai")
+    if tipo in SEM_FILIACAO:
+        mae = pai = ""
     if mae and pai:
         resto += ", filh{} de {} e de {}".format(o, mae, pai)
     elif mae or pai:
