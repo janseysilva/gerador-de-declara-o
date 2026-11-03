@@ -2,14 +2,10 @@
 # (PyInstaller + Inno Setup) e publica em Releases para baixar.
 name: Instalador Declarações Escolares
 
+# Só monta o instalador quando alguém pedir (aba Actions > Run workflow),
+# não mais a cada mudança no código.
 on:
   workflow_dispatch:
-  push:
-    branches: [main]
-    paths-ignore:
-      - "**.md"
-      - "LEIA-ME.txt"
-      - "versao-navegador/**"
 
 permissions:
   contents: write
