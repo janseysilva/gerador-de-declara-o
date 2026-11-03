@@ -517,6 +517,8 @@ def genero(sexo):
 def _curso(a, prep):
     e = ETAPAS.get(a.get("etapa") or etapa_da_serie(a.get("serie")), "")
     if a.get("serie"):
+        if re.search(r"ª|etapa|s[ée]rie", a["serie"], re.I):          # feminino: "na 1ª etapa"
+            prep = {"no": "na", "o": "a"}.get(prep, prep)
         return "{} {}{}".format(prep, a["serie"], " " + e if e else "")
     if prep == "no":
         return re.sub(r"^do ", "no ", re.sub(r"^da ", "na ", e))
