@@ -32,7 +32,7 @@ import tkinter as tk
 import tkinter.font as tkfont
 from tkinter import ttk, filedialog, messagebox
 
-VERSAO_PROGRAMA = "1.7"
+VERSAO_PROGRAMA = "1.8"
 NOME_PROGRAMA = "Declarações Escolares"
 
 
@@ -1863,12 +1863,7 @@ class Aplicacao(tk.Tk):
               opcoes=["(em branco)"] + MOTIVOS_FALTA + ["Outro"]).pack(side="left", fill="x", expand=True)
         self.campo_motivo_outro = campo(linha, "Qual?", t["motivo_outro"], largura=18)
         t["motivo"].trace_add("write", lambda *_: self._ao_mudar_motivo())
-        linha = tk.Frame(f, bg=COR_CARTAO)
-        linha.pack(fill="x", pady=(4, 0))
-        q = campo(linha, "Responsável (escolha ou digite outro nome)", t["resp_nome"], opcoes=[])
-        q.pack(side="left", fill="x", expand=True)
-        self.combo_resp_just = q.entrada
-        campo(linha, "Telefone/WhatsApp", t["telefone"], largura=15).pack(side="left", padx=(8, 0))
+        self.resp_just = self._montar_escolha_resp(f, t["resp_nome"], "WhatsApp:", t["telefone"], 14)
         self.extras["justificativa"] = f
 
         # Termo de compromisso: o que vem do arquivo aparece para conferir; o resto se preenche aqui
@@ -1876,14 +1871,8 @@ class Aplicacao(tk.Tk):
         self.info_compromisso = tk.Label(f, text="", bg=COR_CARTAO, fg=COR_TEXTO, font=(FONTE, 9),
                                          anchor="w", justify="left", wraplength=440)
         self.info_compromisso.pack(fill="x")
-        linha = tk.Frame(f, bg=COR_CARTAO)
-        linha.pack(fill="x", pady=(6, 0))
-        q = campo(linha, "Responsável (escolha ou digite outro nome)", t["c_nome"], opcoes=[])
-        q.pack(side="left", fill="x", expand=True)
-        self.combo_resp_comp = q.entrada
-        q = campo(linha, "CPF", t["c_cpf"], largura=16)
-        q.pack(side="left", padx=(8, 0))
-        t["c_cpf"].trace_add("write", lambda *_, w=q.entrada: self._mascara_cpf(t["c_cpf"], w))
+        self.resp_comp = self._montar_escolha_resp(f, t["c_nome"], "CPF:", t["c_cpf"], 15)
+        t["c_cpf"].trace_add("write", lambda *_, w=self.resp_comp["lado"]: self._mascara_cpf(t["c_cpf"], w))
         t["c_nome"].trace_add("write", lambda *_: self._ao_mudar_resp_comp())
         linha = tk.Frame(f, bg=COR_CARTAO)
         linha.pack(fill="x", pady=(4, 0))
@@ -1893,6 +1882,79 @@ class Aplicacao(tk.Tk):
         q.pack(side="left", padx=(8, 0))
         t["horario"].trace_add("write", lambda *_, w=q.entrada: self._mascara_hora(t["horario"], w))
         self.extras["compromisso"] = f
+
+    def _montar_escolha_resp(self, pai, var_nome, rotulo_lado, var_lado, largura_lado):
+        """Responsável: pílulas Mãe / Pai / Responsável (do arquivo) e Outro (abre campo para digitar)."""
+        w = {"escolha": tk.StringVar(), "nome": var_nome, "opcoes": []}
+        tk.Label(pai, text="Responsável", bg=COR_CARTAO, fg=COR_TEXTO_FRACO,
+                 font=(FONTE, 9, "bold")).pack(anchor="w", pady=(6, 0))
+        w["chips"] = tk.Frame(pai, bg=COR_CARTAO)
+        w["chips"].pack(fill="x", pady=(2, 0))
+        linha = tk.Frame(pai, bg=COR_CARTAO, height=32)
+        linha.pack(fill="x", pady=(4, 0))
+        linha.pack_propagate(False)
+        lado = tk.Frame(linha, bg=COR_CARTAO)
+        lado.pack(side="right")
+        tk.Label(lado, text=rotulo_lado, bg=COR_CARTAO, fg=COR_TEXTO_FRACO,
+                 font=(FONTE, 9, "bold")).pack(side="left", padx=(8, 6))
+        w["lado"] = ttk.Entry(lado, textvariable=var_lado, style="Campo.TEntry", font=(FONTE, 10), width=largura_lado)
+        w["lado"].pack(side="left")
+        w["rotulo"] = tk.Label(linha, text="", bg=COR_CARTAO, fg=COR_TEXTO, font=(FONTE, 10, "bold"), anchor="w")
+        w["linha"], w["lado_quadro"] = linha, lado
+        w["fonte"] = tkfont.Font(family=FONTE, size=10, weight="bold")
+        linha.bind("<Configure>", lambda e: self._ajustar_nome_resp(w))
+        w["digitar"] = tk.Frame(linha, bg=COR_CARTAO)
+        tk.Label(w["digitar"], text="Nome:", bg=COR_CARTAO, fg=COR_TEXTO_FRACO,
+                 font=(FONTE, 9, "bold")).pack(side="left", padx=(0, 6))
+        w["entrada"] = ttk.Entry(w["digitar"], textvariable=var_nome, style="Campo.TEntry", font=(FONTE, 10))
+        w["entrada"].pack(side="left", fill="x", expand=True)
+        w["escolha"].trace_add("write", lambda *_: self._ao_escolher_resp(w))
+        return w
+
+    def _preencher_escolha_resp(self, w, a):
+        for c in w["chips"].winfo_children():
+            c.destroy()
+        w["opcoes"] = self._responsaveis(a)
+        if a.get("responsavel") and all(sem_acento(n) != sem_acento(a["responsavel"]) for _r, n in w["opcoes"]):
+            w["opcoes"].append(("Responsável", a["responsavel"]))
+        for rotulo_, _n in w["opcoes"]:
+            Chip(w["chips"], rotulo_, w["escolha"], rotulo_).pack(side="left", padx=(0, 6))
+        Chip(w["chips"], "Outro", w["escolha"], "Outro").pack(side="left")
+        # começa em quem fez a matrícula (se estiver no arquivo)
+        padrao = next((r for r, n in w["opcoes"] if a.get("responsavel") and sem_acento(n) == sem_acento(a["responsavel"])),
+                      w["opcoes"][0][0] if w["opcoes"] else "Outro")
+        if w["escolha"].get() == padrao:
+            self._ao_escolher_resp(w)
+        else:
+            w["escolha"].set(padrao)
+
+    def _ao_escolher_resp(self, w):
+        escolha = w["escolha"].get()
+        nome = dict(w["opcoes"]).get(escolha, "")
+        if escolha != "Outro" and nome:
+            w["nome"].set(nome)
+            w["digitar"].pack_forget()
+            w["rotulo"].pack(side="left", fill="x", expand=True)
+            self._ajustar_nome_resp(w)
+        else:
+            w["nome"].set("")
+            w["rotulo"].pack_forget()
+            w["digitar"].pack(side="left", fill="x", expand=True)
+            if self.aluno and self.var_tipo.get() in TERMOS:
+                w["entrada"].focus_set()
+
+    def _ajustar_nome_resp(self, w):
+        """Mostra o nome inteiro; se não couber ao lado do CPF/WhatsApp, termina com '…' (só na tela)."""
+        if w["escolha"].get() == "Outro":
+            return
+        nome = w["nome"].get()
+        livre = w["linha"].winfo_width() - w["lado_quadro"].winfo_reqwidth() - 12
+        texto = nome
+        if livre > 40:
+            while texto and w["fonte"].measure(texto + "…") > livre:
+                texto = texto[:-1]
+            texto = nome if texto == nome else texto.rstrip() + "…"
+        w["rotulo"].configure(text=texto)
 
     def _ao_mudar_motivo(self):
         if self.termo["motivo"].get() == "Outro":
@@ -1908,18 +1970,12 @@ class Aplicacao(tk.Tk):
             t[k].set("")
         t["motivo"].set("(em branco)")
         t["telefone"].set(a.get("telefone", ""))
-        nomes = [n for _r, n in self._responsaveis(a)]
-        if a.get("responsavel") and a["responsavel"] not in nomes:
-            nomes.insert(0, a["responsavel"])
-        self.combo_resp_just.configure(values=nomes)
-        t["resp_nome"].set(a.get("responsavel") or (nomes[0] if nomes else ""))
+        self._preencher_escolha_resp(self.resp_just, a)
         t["horario"].set(datetime.now().strftime("%H:%M"))
-        self.combo_resp_comp.configure(values=nomes)
         self._cpf_automatico = ""
-        t["c_nome"].set(a.get("responsavel") or (nomes[0] if nomes else ""))
+        self._preencher_escolha_resp(self.resp_comp, a)
         self._ao_mudar_resp_comp()
-        self.info_compromisso.configure(text="Endereço, bairro, telefone, série, turma e turno saem do arquivo. "
-                                             "Confira o responsável e o CPF; o que ficar vazio sai em branco no papel.")
+        self.info_compromisso.configure(text="Endereço, bairro, telefone, série, turma e turno saem do arquivo.")
 
     def _mascara_cpf(self, var, entrada):
         """CPF no formato 000.000.000-00 enquanto digita."""
@@ -2138,7 +2194,7 @@ class Aplicacao(tk.Tk):
     def _responsaveis(self, a):
         """Responsáveis do aluno que vieram no arquivo: [(rótulo, nome)]."""
         lista = [("Mãe", a.get("mae")), ("Pai", a.get("pai"))]
-        if a.get("responsavel") and a["responsavel"] not in (a.get("mae"), a.get("pai")):
+        if a.get("responsavel") and sem_acento(a["responsavel"]) not in (sem_acento(a.get("mae")), sem_acento(a.get("pai"))):
             lista.append(("Responsável", a["responsavel"]))
         return [(r, n) for r, n in lista if n]
 
@@ -2306,6 +2362,11 @@ class Aplicacao(tk.Tk):
                 return
             if tipo == "compromisso" and len(re.sub(r"\D", "", self.termo["c_cpf"].get())) not in (0, 11):
                 self.var_status.set("O CPF do responsável está incompleto: são 11 números (ou deixe vazio).")
+                return
+            w = self.resp_just if tipo == "justificativa" else self.resp_comp
+            if w["escolha"].get() == "Outro" and not w["nome"].get().strip():
+                self.var_status.set("Digite o nome do responsável (opção Outro).")
+                w["entrada"].focus_set()
                 return
             if tipo == "justificativa" and self.termo["motivo"].get() == "Outro" and not self.termo["motivo_outro"].get().strip():
                 self.var_status.set("Escreva qual é o outro motivo.")
