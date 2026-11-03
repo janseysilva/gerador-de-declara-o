@@ -988,8 +988,15 @@ class Chip(tk.Canvas):
         self.bind("<Button-1>", lambda e: self._clicar())
         self.bind("<Enter>", lambda e: self._mudar_sobre(True))
         self.bind("<Leave>", lambda e: self._mudar_sobre(False))
-        variavel.trace_add("write", lambda *_: self._desenhar())
+        self._trace = variavel.trace_add("write", lambda *_: self._desenhar())
+        self.bind("<Destroy>", lambda e: self._soltar())
         self._desenhar()
+
+    def _soltar(self):
+        try:
+            self._var.trace_remove("write", self._trace)
+        except (tk.TclError, ValueError):
+            pass
 
     def _ligado(self):
         if self._valor is None:
@@ -1193,6 +1200,7 @@ class Aplicacao(tk.Tk):
         self._atualizar_banco()
         self._mostrar_extras()
         self._mostrar_aluno()
+        self._parentesco_padrao({})
         self._atualizar_relogio()
         self.after(100, self.entrada_busca.focus_set)
 
@@ -1386,15 +1394,21 @@ class Aplicacao(tk.Tk):
         self.extras["vaga"] = f
 
         f = tk.Frame(self.area_extras, bg=COR_CARTAO)
+        self.chips_resp = tk.Frame(f, bg=COR_CARTAO)
+        self.chips_resp.pack(fill="x")
+        self.linha_resp = tk.Frame(f, bg=COR_CARTAO, height=32)
+        self.linha_resp.pack(fill="x", pady=(4, 0))
+        self.linha_resp.pack_propagate(False)
+        self.nome_resp = tk.Label(self.linha_resp, text="", bg=COR_CARTAO, fg=COR_TEXTO,
+                                  font=(FONTE, 10), anchor="w")
+        self.outro_resp = tk.Frame(self.linha_resp, bg=COR_CARTAO)
+        tk.Label(self.outro_resp, text="Nome:", bg=COR_CARTAO, fg=COR_TEXTO_FRACO,
+                 font=(FONTE, 9, "bold")).pack(side="left", padx=(0, 6))
+        self.entrada_outro = ttk.Entry(self.outro_resp, textvariable=e["resp_nome"], style="Campo.TEntry",
+                                       font=(FONTE, 10))
+        self.entrada_outro.pack(side="left", fill="x", expand=True)
         linha = tk.Frame(f, bg=COR_CARTAO)
-        linha.pack(fill="x")
-        self.combo_parentesco = campo(linha, "Declaração para", e["parentesco"],
-                                      opcoes=["Mãe", "Pai", "Responsável", "Outra pessoa"], editavel=False, largura=13)
-        self.combo_parentesco.pack(side="left", padx=(0, 8))
-        self.campo_resp = campo(linha, "Nome de quem compareceu", e["resp_nome"])
-        self.campo_resp.pack(side="left", fill="x", expand=True)
-        linha = tk.Frame(f, bg=COR_CARTAO)
-        linha.pack(fill="x", pady=(6, 0))
+        linha.pack(fill="x", pady=(4, 0))
         campo(linha, "Motivo", e["motivo"], opcoes=[
             "atendimento na escola", "reunião de pais e mestres", "atendimento com a equipe pedagógica",
             "atendimento com a gestão escolar", "entrega de boletim"]).pack(side="left", fill="x", expand=True)
@@ -1545,7 +1559,7 @@ class Aplicacao(tk.Tk):
         self.aluno = {k: v for k, v in a.items() if not k.startswith("_")}
         agora = datetime.now()
         self.ext["proxima"].set(proxima_serie(a.get("serie")))
-        self._parentesco_padrao(a)
+        self._parentesco_padrao(self.aluno)
         self.ext["hora_fim"].set(agora.strftime("%H:%M"))
         self.ext["hora_ini"].set("{:02d}:{:02d}".format(max(agora.hour - 1, 0), agora.minute))
         self.ext["freq"].set("")
@@ -1553,15 +1567,27 @@ class Aplicacao(tk.Tk):
         self._mostrar_aluno()
         self.var_status.set("Escolha o tipo de declaração e clique em Gerar declaração.")
 
+    def _responsaveis(self, a):
+        """Responsáveis do aluno que vieram no arquivo: [(rótulo, nome)]."""
+        lista = [("Mãe", a.get("mae")), ("Pai", a.get("pai"))]
+        if a.get("responsavel") and a["responsavel"] not in (a.get("mae"), a.get("pai")):
+            lista.append(("Responsável", a["responsavel"]))
+        return [(r, n) for r, n in lista if n]
+
     def _parentesco_padrao(self, a):
-        if a.get("mae"):
-            escolha = "Mãe"
-        elif a.get("pai"):
-            escolha = "Pai"
-        elif a.get("responsavel"):
-            escolha = "Responsável"
-        else:
-            escolha = "Outra pessoa"
+        """Monta as pílulas com quem pode receber a declaração de comparecimento."""
+        for w in self.chips_resp.winfo_children():
+            w.destroy()
+        tk.Label(self.chips_resp, text="Quem compareceu", bg=COR_CARTAO, fg=COR_TEXTO_FRACO,
+                 font=(FONTE, 9, "bold")).pack(anchor="w")
+        linha = tk.Frame(self.chips_resp, bg=COR_CARTAO)
+        linha.pack(fill="x", pady=(2, 0))
+        opcoes = self._responsaveis(a)
+        for rotulo_, _nome in opcoes:
+            Chip(linha, rotulo_, self.ext["parentesco"], rotulo_).pack(side="left", padx=(0, 6))
+        Chip(linha, "Outra pessoa", self.ext["parentesco"], "Outra pessoa").pack(side="left")
+        escolha = opcoes[0][0] if opcoes else "Outra pessoa"
+        self.ext["resp_nome"].set("")
         if self.ext["parentesco"].get() == escolha:
             self._ao_mudar_parentesco()
         else:
@@ -1570,10 +1596,18 @@ class Aplicacao(tk.Tk):
     def _ao_mudar_parentesco(self):
         a = self.aluno or {}
         escolha = self.ext["parentesco"].get()
-        nome = {"Mãe": a.get("mae"), "Pai": a.get("pai"), "Responsável": a.get("responsavel")}.get(escolha, "")
-        self.ext["resp_nome"].set(nome or "")
-        if not nome and self.aluno:
-            self.campo_resp.entrada.focus_set()
+        nome = dict(self._responsaveis(a)).get(escolha, "")
+        if nome:
+            self.ext["resp_nome"].set(nome)
+            self.outro_resp.pack_forget()
+            self.nome_resp.configure(text="{}:  {}".format(escolha, nome), font=(FONTE, 10, "bold"))
+            self.nome_resp.pack(fill="x", pady=(4, 0))
+        else:
+            self.ext["resp_nome"].set("")
+            self.nome_resp.pack_forget()
+            self.outro_resp.pack(fill="x", pady=(2, 0))
+            if self.aluno and self.var_tipo.get() == "comparecimento":
+                self.entrada_outro.focus_set()
 
     def _ao_mudar_assinatura(self):
         quem = self.var_assina.get()
@@ -1674,7 +1708,7 @@ class Aplicacao(tk.Tk):
             self.aluno.update(novo)
             self.ext["proxima"].set(proxima_serie(novo["serie"]))
             self._mostrar_aluno()
-            self._ao_mudar_parentesco()
+            self._parentesco_padrao(self.aluno)
             janela.destroy()
 
         botoes = tk.Frame(c, bg=COR_CARTAO)
@@ -1696,6 +1730,10 @@ class Aplicacao(tk.Tk):
     def _gerar(self):
         if not self.aluno:
             self.var_status.set("Escolha um aluno primeiro.")
+            return
+        if self.var_tipo.get() == "comparecimento" and not self.ext["resp_nome"].get().strip():
+            self.var_status.set("Digite o nome da pessoa que compareceu.")
+            self.entrada_outro.focus_set()
             return
         cfg = self.cfg
         if not cfg.get("pdf") and not cfg.get("word"):
