@@ -1878,14 +1878,20 @@ class Aplicacao(tk.Tk):
         self.info_compromisso.pack(fill="x")
         linha = tk.Frame(f, bg=COR_CARTAO)
         linha.pack(fill="x", pady=(6, 0))
+        q = campo(linha, "Responsável (escolha ou digite outro nome)", t["c_nome"], opcoes=[])
+        q.pack(side="left", fill="x", expand=True)
+        self.combo_resp_comp = q.entrada
+        q = campo(linha, "CPF", t["c_cpf"], largura=16)
+        q.pack(side="left", padx=(8, 0))
+        t["c_cpf"].trace_add("write", lambda *_, w=q.entrada: self._mascara_cpf(t["c_cpf"], w))
+        t["c_nome"].trace_add("write", lambda *_: self._ao_mudar_resp_comp())
+        linha = tk.Frame(f, bg=COR_CARTAO)
+        linha.pack(fill="x", pady=(4, 0))
         campo(linha, "Profissão do responsável", t["profissao"]).pack(side="left", fill="x", expand=True)
         q = campo(linha, "Horário", t["horario"], largura=7)
         q.entrada.configure(justify="center")
         q.pack(side="left", padx=(8, 0))
         t["horario"].trace_add("write", lambda *_, w=q.entrada: self._mascara_hora(t["horario"], w))
-        self.linha_resp_compromisso = tk.Frame(f, bg=COR_CARTAO)
-        campo(self.linha_resp_compromisso, "Nome do responsável", t["c_nome"]).pack(side="left", fill="x", expand=True)
-        campo(self.linha_resp_compromisso, "CPF", t["c_cpf"], largura=15).pack(side="left", padx=(8, 0))
         self.extras["compromisso"] = f
 
     def _ao_mudar_motivo(self):
@@ -1908,16 +1914,40 @@ class Aplicacao(tk.Tk):
         self.combo_resp_just.configure(values=nomes)
         t["resp_nome"].set(a.get("responsavel") or (nomes[0] if nomes else ""))
         t["horario"].set(datetime.now().strftime("%H:%M"))
-        d = dados_termo(a)
-        if d["resp_nome"]:
-            papel = {"mae": "mãe", "pai": "pai"}.get(d["parentesco"], "responsável")
-            self.info_compromisso.configure(text="Do arquivo: {} ({}){}. Endereço, telefone, série, turma e turno "
-                                                 "também saem do arquivo.".format(
-                                                     d["resp_nome"], papel, ", CPF " + d["cpf"] if d["cpf"] else ""))
-            self.linha_resp_compromisso.pack_forget()
-        else:
-            self.info_compromisso.configure(text="O arquivo não traz quem fez a matrícula. Preencha abaixo.")
-            self.linha_resp_compromisso.pack(fill="x", pady=(4, 0))
+        self.combo_resp_comp.configure(values=nomes)
+        self._cpf_automatico = ""
+        t["c_nome"].set(a.get("responsavel") or (nomes[0] if nomes else ""))
+        self._ao_mudar_resp_comp()
+        self.info_compromisso.configure(text="Endereço, bairro, telefone, série, turma e turno saem do arquivo. "
+                                             "Confira o responsável e o CPF; o que ficar vazio sai em branco no papel.")
+
+    def _mascara_cpf(self, var, entrada):
+        """CPF no formato 000.000.000-00 enquanto digita."""
+        atual = var.get()
+        n = re.sub(r"\D", "", atual)[:11]
+        partes = [n[:3], n[3:6], n[6:9]]
+        certo = ".".join(p for p in partes if p)
+        if len(n) > 9:
+            certo += "-" + n[9:]
+        if certo != atual:
+            var.set(certo)
+            entrada.icursor("end")
+
+    def _ao_mudar_resp_comp(self):
+        """O CPF do arquivo é de quem fez a matrícula: entra quando esse nome é o escolhido."""
+        if not self.aluno:
+            return
+        a, t = self.aluno, self.termo
+        nome = t["c_nome"].get().strip()
+        cpf_atual = t["c_cpf"].get()
+        self._cpf_automatico = getattr(self, "_cpf_automatico", "")
+        if a.get("cpf_resp") and a.get("responsavel") and sem_acento(nome) == sem_acento(a["responsavel"]):
+            if not cpf_atual or cpf_atual == self._cpf_automatico:
+                t["c_cpf"].set(a["cpf_resp"])
+                self._cpf_automatico = t["c_cpf"].get()
+        elif cpf_atual and cpf_atual == self._cpf_automatico:
+            t["c_cpf"].set("")                     # trocou de pessoa: o CPF do arquivo não serve
+            self._cpf_automatico = ""
 
     def _dados_termo_preenchidos(self, tipo):
         t = {k: v.get().strip() for k, v in self.termo.items()}
@@ -1927,9 +1957,16 @@ class Aplicacao(tk.Tk):
                      motivo=None if t["motivo"] in ("", "(em branco)") else t["motivo"],
                      motivo_outro=t["motivo_outro"], resp_nome=t["resp_nome"], telefone=t["telefone"])
         else:
-            d.update(profissao=t["profissao"], horario=t["horario"])
-            if not d["resp_nome"] and t["c_nome"]:
-                d.update(resp_nome=t["c_nome"], cpf=formatar_cpf(t["c_cpf"]) or t["c_cpf"], parentesco="")
+            a = self.aluno
+            nome = t["c_nome"]
+            if nome and sem_acento(nome) == sem_acento(a.get("mae")):
+                parentesco = "mae"
+            elif nome and sem_acento(nome) == sem_acento(a.get("pai")):
+                parentesco = "pai"
+            else:
+                parentesco = "responsavel" if nome else ""
+            d.update(profissao=t["profissao"], horario=t["horario"], resp_nome=nome,
+                     cpf=t["c_cpf"], parentesco=parentesco)
         return d
 
     def _mascara_hora(self, var, entrada):
@@ -2266,6 +2303,9 @@ class Aplicacao(tk.Tk):
             tipo = self.var_tipo.get()
             if tipo == "compromisso" and self.termo["horario"].get() and not self._hora_valida(self.termo["horario"].get()):
                 self.var_status.set("Confira o horário (formato 14:30).")
+                return
+            if tipo == "compromisso" and len(re.sub(r"\D", "", self.termo["c_cpf"].get())) not in (0, 11):
+                self.var_status.set("O CPF do responsável está incompleto: são 11 números (ou deixe vazio).")
                 return
             if tipo == "justificativa" and self.termo["motivo"].get() == "Outro" and not self.termo["motivo_outro"].get().strip():
                 self.var_status.set("Escreva qual é o outro motivo.")

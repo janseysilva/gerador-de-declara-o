@@ -29,7 +29,8 @@ DECLARAÇÕES ESCOLARES - como usar
    Justificativa de falta e Termo de compromisso (CEMASP): ao escolher um deles,
    aparecem no quadro 3 só os campos que não vêm do arquivo (na justificativa:
    data e quantidade de faltas, Bolsa Família, motivo, responsável e telefone; no
-   termo de compromisso: profissão e horário). O resto sai do arquivo de alunos.
+   termo de compromisso: responsável, CPF, profissão e horário). O nome
+   do responsável já vem do arquivo; dá para escolher outro da lista ou digitar. O resto sai do arquivo de alunos.
    Campo deixado vazio sai com a linha em branco no papel.
 
    A data da declaração vem do relógio do computador. O número (Nº 001/2026)
