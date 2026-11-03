@@ -218,7 +218,7 @@ def campo_do_titulo(titulo):
         return "mae"
     if re.search(r"\bpai\b|filiacao ?2|genitor\b", h):
         return "pai"
-    if "responsavel" in h:
+    if re.search(r"responsavel|\bresp\b", h):           # 'Nome Resp. Matrícula'
         return "responsavel"
     if re.search(r"nasc|^dn$", h):
         return "nasc"
