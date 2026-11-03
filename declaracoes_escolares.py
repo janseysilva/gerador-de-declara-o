@@ -499,7 +499,7 @@ TIPOS = [
     ("justificativa", "Justificativa de falta", "TERMO DE JUSTIFICATIVA DE FALTA"),
     ("compromisso", "Termo de compromisso", "TERMO DE CIÊNCIA, COMPROMISSO E RESPONSABILIDADE"),
 ]
-TERMOS = {"justificativa", "compromisso"}        # abrem uma janela para completar antes de gerar
+TERMOS = {"justificativa", "compromisso"}        # formulários: saem preenchidos com o que houver no arquivo
 FILEIRAS_TIPOS = [["matricula", "frequencia", "transferencia"], ["conclusao", "comparecimento"],
                   ["justificativa", "compromisso"]]
 NOME_TIPO = {t[0]: t[1] for t in TIPOS}
@@ -880,10 +880,23 @@ def _turma_texto(a):
     return " – ".join(v for v in (a.get("serie"), a.get("turma") and "Turma " + a["turma"]) if v)
 
 
+def dados_termo(a):
+    """O que os termos levam do banco de dados; o resto fica em branco para preencher à mão."""
+    resp = a.get("responsavel", "")
+    if resp and sem_acento(resp) == sem_acento(a.get("mae")):
+        parentesco = "mae"
+    elif resp and sem_acento(resp) == sem_acento(a.get("pai")):
+        parentesco = "pai"
+    else:
+        parentesco = "responsavel" if resp else ""
+    return {"resp_nome": resp, "cpf": a.get("cpf_resp", "") if resp else "", "telefone": a.get("telefone", ""),
+            "parentesco": parentesco, "profissao": "", "horario": ""}
+
+
 def blocos_justificativa(cfg, a, d):
     """Termo de Justificativa de Falta (modelo da escola)."""
     turno = (a.get("turno") or "").capitalize()
-    bolsa = {"sim": "Sim", "nao": "Não"}.get(d.get("bolsa"), None)
+    bolsa = None                          # não está no arquivo: o responsável marca
     return [
         ("titulo", "TERMO DE JUSTIFICATIVA DE FALTA"),
         ("secao", "IDENTIFICAÇÃO DO ALUNO(A):"),
@@ -892,18 +905,18 @@ def blocos_justificativa(cfg, a, d):
         ("marcar", "Turno", ["Matutino", "Vespertino"], turno),
         ("marcar", "Beneficiário do Bolsa Família", ["Sim", "Não"], bolsa),
         ("espaco", 3),
-        ("campo", "Data da falta", d.get("data_falta", "")),
-        ("campo", "Quantidade de Faltas", d.get("qtd_faltas", "")),
+        ("campo", "Data da falta", ""),
+        ("campo", "Quantidade de Faltas", ""),
         ("secao", "MOTIVO DA AUSÊNCIA:"),
-        ("lista", MOTIVOS_FALTA, d.get("motivo"), d.get("motivo_outro", "")),
+        ("lista", MOTIVOS_FALTA, None, ""),
         ("secao", "DECLARAÇÃO DO(A) RESPONSÁVEL:"),
         ("par", [("Declaro, para os devidos fins, que a ausência do(a) aluno(a) acima identificado(a) na "
                   "data informada ocorreu pelo motivo assinalado. Assumo a responsabilidade pelas "
                   "informações prestadas, estando ciente de que a escola poderá solicitar esclarecimentos "
                   "adicionais, se necessário.", False)], 0),
         ("secao", "ASSINATURA E CONTATO DO(A) RESPONSÁVEL:"),
-        ("campo", "Nome do(a) responsável", (d.get("resp_nome") or "").upper()),
-        ("campo", "Telefone/WhatsApp", d.get("telefone", "")),
+        ("campo", "Nome do(a) responsável", ""),
+        ("campo", "Telefone/WhatsApp", ""),
         ("campo", "Assinatura", ""),
         ("secao", "USO DA ESCOLA (Secretaria):"),
         ("campo", "Recebido por", "", 0.75),
@@ -971,7 +984,7 @@ def blocos_compromisso(cfg, a, d):
     blocos += [
         ("par", final, 0),
         ("secao", "ASSINATURAS:"),
-        ("assinatura_linha", "Pedagogo(a)", d.get("pedagogo", "")),
+        ("assinatura_linha", "Pedagogo(a)", ""),
         ("assinatura_linha", "Gestor(a) da escola", cfg.get("gestor_nome", "")),
         ("assinatura_centro", "Assinatura do Responsável", (d.get("resp_nome") or "").upper()),
     ]
@@ -1833,10 +1846,12 @@ class Aplicacao(tk.Tk):
             e[chave].trace_add("write", lambda *_, v=e[chave], w=q.entrada: self._mascara_hora(v, w))
         self.extras["comparecimento"] = f
 
-        for chave, texto in (("justificativa", "Ao clicar em Gerar, abre uma janela para escolher o responsável,\n"
-                                                 "a data e a quantidade de faltas, o motivo e o Bolsa Família."),
-                             ("compromisso", "Ao clicar em Gerar, abre uma janela para escolher o responsável e\n"
-                                               "conferir CPF, profissão, horário e o nome do(a) pedagogo(a).")):
+        for chave, texto in (("justificativa", "Sai com o aluno, a série/turma e o turno preenchidos.\n"
+                                                 "Bolsa Família, data e quantidade de faltas, motivo e os dados\n"
+                                                 "do responsável ficam em branco para preencher à mão."),
+                             ("compromisso", "Sai preenchido com o que está no arquivo: quem fez a matrícula,\n"
+                                               "CPF, endereço, bairro, telefone, série, turma e turno.\n"
+                                               "O que não estiver no arquivo (profissão, horário) fica em branco.")):
             f = tk.Frame(self.area_extras, bg=COR_CARTAO)
             rotulo(f, texto, fraco=True, tam=9, justify="left").pack(anchor="w")
             self.extras[chave] = f
@@ -2171,7 +2186,7 @@ class Aplicacao(tk.Tk):
             self.var_status.set("Escolha um aluno primeiro.")
             return
         if self.var_tipo.get() in TERMOS:
-            JanelaTermo(self, self.var_tipo.get(), self.aluno)
+            self.gerar_termo(self.var_tipo.get(), dados_termo(self.aluno))
             return
         if self.var_tipo.get() == "comparecimento":
             if not self.ext["resp_nome"].get().strip():
@@ -2312,166 +2327,6 @@ class Aplicacao(tk.Tk):
 
     def configuracao_salva(self):
         self._atualizar_relogio()
-
-
-class JanelaTermo(tk.Toplevel):
-    """Completa o Termo de Justificativa de Falta ou o Termo de Compromisso antes de gerar."""
-
-    def __init__(self, app, tipo, aluno):
-        super().__init__(app)
-        self.app, self.tipo, self.aluno = app, tipo, aluno
-        self.title(NOME_TIPO[tipo] + " – " + NOME_PROGRAMA)
-        self.configure(bg=COR_FUNDO)
-        self.transient(app)
-        self.resizable(False, False)
-        externo, c, _ = cartao(self, TITULO_TIPO[tipo].capitalize(), "✎")
-        externo.pack(fill="both", expand=True, padx=18, pady=18)
-        rotulo(c, "Aluno(a): {}   ·   {}".format(aluno.get("social") or aluno.get("nome"), _turma_texto(aluno)),
-               negrito=True).pack(anchor="w", pady=(0, 8))
-
-        # responsável: os do arquivo para escolher; "Outra pessoa" para digitar
-        self.var_resp = tk.StringVar()
-        self.var_nome = tk.StringVar()
-        self.var_fone = tk.StringVar(value=aluno.get("telefone", ""))
-        self.var_cpf = tk.StringVar()
-        tk.Label(c, text="Responsável", bg=COR_CARTAO, fg=COR_TEXTO_FRACO,
-                 font=(FONTE, 9, "bold")).pack(anchor="w")
-        linha = tk.Frame(c, bg=COR_CARTAO)
-        linha.pack(fill="x", pady=(2, 0))
-        self.opcoes = app._responsaveis(aluno)
-        for r, _n in self.opcoes:
-            Chip(linha, r, self.var_resp, r).pack(side="left", padx=(0, 6))
-        Chip(linha, "Outra pessoa", self.var_resp, "Outra pessoa").pack(side="left")
-        self.linha_nome = tk.Frame(c, bg=COR_CARTAO, height=34)
-        self.linha_nome.pack(fill="x", pady=(4, 0))
-        self.linha_nome.pack_propagate(False)
-        self.rot_nome = tk.Label(self.linha_nome, text="", bg=COR_CARTAO, fg=COR_TEXTO, font=(FONTE, 10, "bold"),
-                                 anchor="w")
-        self.ent_nome = tk.Frame(self.linha_nome, bg=COR_CARTAO)
-        tk.Label(self.ent_nome, text="Nome:", bg=COR_CARTAO, fg=COR_TEXTO_FRACO,
-                 font=(FONTE, 9, "bold")).pack(side="left", padx=(0, 6))
-        self.entrada_nome = ttk.Entry(self.ent_nome, textvariable=self.var_nome, style="Campo.TEntry", font=(FONTE, 10))
-        self.entrada_nome.pack(side="left", fill="x", expand=True)
-        self.var_resp.trace_add("write", lambda *_: self._ao_mudar_resp())
-
-        grade = tk.Frame(c, bg=COR_CARTAO)
-        grade.pack(fill="x", pady=(6, 0))
-        if tipo == "justificativa":
-            self.var_bolsa = tk.StringVar(value="")
-            self.var_data = tk.StringVar(value=hoje_br())
-            self.var_qtd = tk.StringVar(value="1")
-            self.var_motivo = tk.StringVar(value="")
-            self.var_outro = tk.StringVar()
-            campo(grade, "Telefone/WhatsApp", self.var_fone, largura=18).grid(row=0, column=0, sticky="w", padx=(0, 10))
-            campo(grade, "Data da falta", self.var_data, largura=24).grid(row=0, column=1, sticky="w", padx=(0, 10))
-            campo(grade, "Quantidade de faltas", self.var_qtd, largura=8).grid(row=0, column=2, sticky="w")
-            tk.Label(c, text="Beneficiário do Bolsa Família", bg=COR_CARTAO, fg=COR_TEXTO_FRACO,
-                     font=(FONTE, 9, "bold")).pack(anchor="w", pady=(8, 0))
-            linha = tk.Frame(c, bg=COR_CARTAO)
-            linha.pack(fill="x", pady=(2, 0))
-            for texto, valor in (("Sim", "sim"), ("Não", "nao"), ("Deixar em branco", "")):
-                Chip(linha, texto, self.var_bolsa, valor).pack(side="left", padx=(0, 6))
-            tk.Label(c, text="Motivo da ausência", bg=COR_CARTAO, fg=COR_TEXTO_FRACO,
-                     font=(FONTE, 9, "bold")).pack(anchor="w", pady=(8, 0))
-            opcoes = [("Em branco (o responsável marca)", "")] + [(m, m) for m in MOTIVOS_FALTA] + [("Outro", "Outro")]
-            bloco = tk.Frame(c, bg=COR_CARTAO)
-            bloco.pack(fill="x", pady=(2, 0))
-            for i, (texto, valor) in enumerate(opcoes):
-                Chip(bloco, texto, self.var_motivo, valor).grid(row=i // 2, column=i % 2, sticky="w",
-                                                              padx=(0, 6), pady=(0, 4))
-            caixa_outro = tk.Frame(c, bg=COR_CARTAO)        # fica logo abaixo das opções de motivo
-            caixa_outro.pack(fill="x")
-            self.campo_outro = campo(caixa_outro, "Qual outro motivo?", self.var_outro)
-            self.var_motivo.trace_add("write", lambda *_: self._ao_mudar_motivo())
-            self._ao_mudar_motivo()
-        else:
-            agora = datetime.now()
-            self.var_prof = tk.StringVar()
-            self.var_hora = tk.StringVar(value=agora.strftime("%H:%M"))
-            self.var_ped = tk.StringVar(value=app.cfg.get("pedagogo_nome", ""))
-            campo(grade, "CPF do responsável", self.var_cpf, largura=18).grid(row=0, column=0, sticky="w", padx=(0, 10))
-            campo(grade, "Profissão (opcional)", self.var_prof, largura=24).grid(row=0, column=1, sticky="w", padx=(0, 10))
-            campo(grade, "Telefone", self.var_fone, largura=16).grid(row=0, column=2, sticky="w")
-            grade2 = tk.Frame(c, bg=COR_CARTAO)
-            grade2.pack(fill="x", pady=(6, 0))
-            q = campo(grade2, "Horário", self.var_hora, largura=7)
-            q.entrada.configure(justify="center")
-            q.grid(row=0, column=0, sticky="w", padx=(0, 10))
-            self.var_hora.trace_add("write", lambda *_: app._mascara_hora(self.var_hora, q.entrada))
-            campo(grade2, "Pedagogo(a) (opcional)", self.var_ped, largura=40).grid(row=0, column=1, sticky="w")
-            rotulo(c, "O endereço, o bairro e a turma saem do arquivo. A data é a de hoje.",
-                   fraco=True, tam=9).pack(anchor="w", pady=(6, 0))
-
-        botoes = tk.Frame(c, bg=COR_CARTAO)
-        botoes.pack(fill="x", pady=(14, 0))
-        self.aviso = rotulo(botoes, "", tam=9)
-        self.aviso.configure(fg=COR_LARANJA)
-        self.aviso.pack(side="left")
-        Botao(botoes, "▶  Gerar termo", self._gerar, estilo="principal", fonte=(FONTE, 11, "bold"),
-              pad_x=22).pack(side="right")
-        Botao(botoes, "Cancelar", self.destroy).pack(side="right", padx=(0, 8))
-        self.var_resp.set(self.opcoes[0][0] if self.opcoes else "Outra pessoa")
-        self.update_idletasks()
-        x = app.winfo_rootx() + max((app.winfo_width() - self.winfo_reqwidth()) // 2, 0)
-        y = app.winfo_rooty() + max((app.winfo_height() - self.winfo_reqheight()) // 2, 0)
-        self.geometry("+{}+{}".format(x, y))
-        self.grab_set()
-
-    def _ao_mudar_resp(self):
-        escolha = self.var_resp.get()
-        nome = dict(self.opcoes).get(escolha, "")
-        if nome:
-            self.var_nome.set(nome)
-            self.ent_nome.pack_forget()
-            self.rot_nome.configure(text="{}:  {}".format(escolha, nome))
-            self.rot_nome.pack(fill="x", pady=(4, 0))
-        else:
-            self.var_nome.set("")
-            self.rot_nome.pack_forget()
-            self.ent_nome.pack(fill="x", pady=(2, 0))
-            self.entrada_nome.focus_set()
-        # o CPF do arquivo é de quem fez a matrícula
-        a = self.aluno
-        if nome and a.get("cpf_resp") and sem_acento(nome) == sem_acento(a.get("responsavel") or a.get("mae") or ""):
-            self.var_cpf.set(a["cpf_resp"])
-        else:
-            self.var_cpf.set("")
-
-    def _ao_mudar_motivo(self):
-        if self.var_motivo.get() == "Outro":
-            self.campo_outro.pack(fill="x", pady=(4, 0))
-            self.campo_outro.entrada.focus_set()
-        else:
-            self.campo_outro.pack_forget()
-
-    def _gerar(self):
-        nome = self.var_nome.get().strip()
-        if not nome:
-            self.aviso.configure(text="Digite o nome do responsável.")
-            self.entrada_nome.focus_set()
-            return
-        escolha = self.var_resp.get()
-        dados = {"resp_nome": nome, "telefone": self.var_fone.get().strip(),
-                 "parentesco": {"Mãe": "mae", "Pai": "pai"}.get(escolha, "responsavel")}
-        if self.tipo == "justificativa":
-            dados.update(bolsa=self.var_bolsa.get(), data_falta=self.var_data.get().strip(),
-                         qtd_faltas=self.var_qtd.get().strip(), motivo=self.var_motivo.get(),
-                         motivo_outro=self.var_outro.get().strip())
-            if dados["motivo"] == "Outro" and not dados["motivo_outro"]:
-                self.aviso.configure(text="Escreva qual é o outro motivo.")
-                return
-        else:
-            if self.var_hora.get() and not self.app._hora_valida(self.var_hora.get()):
-                self.aviso.configure(text="Confira o horário (formato 14:30).")
-                return
-            dados.update(cpf=formatar_cpf(self.var_cpf.get()) or self.var_cpf.get().strip(),
-                         profissao=self.var_prof.get().strip(), horario=self.var_hora.get().strip(),
-                         pedagogo=self.var_ped.get().strip())
-            if dados["pedagogo"] != self.app.cfg.get("pedagogo_nome", ""):
-                self.app.cfg["pedagogo_nome"] = dados["pedagogo"]
-                gravar_json(ARQ_CONFIG, self.app.cfg)
-        if self.app.gerar_termo(self.tipo, dados):
-            self.destroy()
 
 
 class JanelaConfiguracao(tk.Toplevel):
