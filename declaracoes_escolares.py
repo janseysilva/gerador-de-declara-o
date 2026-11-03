@@ -32,7 +32,7 @@ import tkinter as tk
 import tkinter.font as tkfont
 from tkinter import ttk, filedialog, messagebox
 
-VERSAO_PROGRAMA = "1.5"
+VERSAO_PROGRAMA = "1.6"
 NOME_PROGRAMA = "Declarações Escolares"
 
 
@@ -203,6 +203,8 @@ def campo_do_titulo(titulo):
         return None
     if "nome social" in h:
         return "social"
+    if re.search(r"cpf.*resp", h):
+        return "cpf_resp"
     if re.search(r"cod(igo)? (da )?turma|cod bai|bai of|cpf|\brg\b|sus|sangu|idade|e-?mail|\bnis\b|inep|"
                  r"ano letivo|exercicio|escola|unidade|municipio|cidade|\buf\b|situacao|data (da )?matricula", h):
         return "outro"
@@ -299,6 +301,7 @@ def normalizar(a):
         "cep": str(a.get("cep") or "").strip(),
         "telefone": formatar_fone(a.get("telefone")),
         "telefone2": formatar_fone(a.get("telefone2")),
+        "cpf_resp": formatar_cpf(a.get("cpf_resp")),
     }
     sx = sem_acento(a.get("sexo"))[:1]
     r["sexo"] = "F" if sx == "f" else "M" if sx == "m" else ""
@@ -435,6 +438,7 @@ def _escolher_colunas(corpo, titulos):
         "nasc": lambda x: partes_data(x) is not None,
         "sexo": lambda x: sem_acento(x)[:1] in ("m", "f"),
         "matricula": lambda x: bool(re.search(r"\d", x)),
+        "cpf_resp": lambda x: 8 <= len(re.sub(r"\D", "", x)) <= 11,
         "nome": lambda x: bool(re.search(r"[A-Za-z]{2,}\s+[A-Za-z]", sem_acento(x))),
         "mae": lambda x: bool(re.search(r"[A-Za-z]", x)),
         "pai": lambda x: bool(re.search(r"[A-Za-z]", x)),
@@ -492,7 +496,12 @@ TIPOS = [
     ("transferencia", "Transferência", "DECLARAÇÃO DE TRANSFERÊNCIA"),
     ("conclusao", "Conclusão", "DECLARAÇÃO DE CONCLUSÃO"),
     ("comparecimento", "Comparecimento", "DECLARAÇÃO DE COMPARECIMENTO"),
+    ("justificativa", "Justificativa de falta", "TERMO DE JUSTIFICATIVA DE FALTA"),
+    ("compromisso", "Termo de compromisso", "TERMO DE CIÊNCIA, COMPROMISSO E RESPONSABILIDADE"),
 ]
+TERMOS = {"justificativa", "compromisso"}        # abrem uma janela para completar antes de gerar
+FILEIRAS_TIPOS = [["matricula", "frequencia", "transferencia"], ["conclusao", "comparecimento"],
+                  ["justificativa", "compromisso"]]
 NOME_TIPO = {t[0]: t[1] for t in TIPOS}
 TITULO_TIPO = {t[0]: t[2] for t in TIPOS}
 
@@ -835,6 +844,365 @@ def gerar_word(caminho, cfg, tipo, paras, numero_txt, logo):
         r.font.name = "Arial"
         r.font.color.rgb = RGBColor.from_string("444444")
     doc.save(caminho)
+
+
+# ---------------------------------------------------------------------------
+# Termos (formulários): Justificativa de falta e Termo de compromisso (CEMASP)
+# ---------------------------------------------------------------------------
+
+MOTIVOS_FALTA = [
+    "Chuva forte / alagamento",
+    "Transporte (ônibus/van) / dificuldade de locomoção",
+    "Motivo de saúde (sem documento)",
+    "Motivo familiar",
+    "Consulta/compromisso (sem comprovante)",
+]
+
+CABECALHO_CEMASP = [
+    "PREFEITURA DE MANAUS",
+    "SUBSECRETARIA DE GESTÃO EDUCACIONAL",
+    "DEPARTAMENTO DE GESTÃO EDUCACIONAL",
+    "DIVISÃO DE APOIO À GESTÃO ESCOLAR – DAGE",
+    "CENTRO MUNICIPAL DE ATENDIMENTO SOCIOPSICOPEDAGÓGICO",
+]
+
+
+def formatar_cpf(valor):
+    n = re.sub(r"\D", "", str(valor or ""))
+    if 8 <= len(n) < 11:
+        n = n.zfill(11)              # o sistema da SEMED tira os zeros da frente
+    if len(n) == 11 and set(n) != {"0"}:
+        return "{}.{}.{}-{}".format(n[:3], n[3:6], n[6:9], n[9:])
+    return ""
+
+
+def _turma_texto(a):
+    return " – ".join(v for v in (a.get("serie"), a.get("turma") and "Turma " + a["turma"]) if v)
+
+
+def blocos_justificativa(cfg, a, d):
+    """Termo de Justificativa de Falta (modelo da escola)."""
+    turno = (a.get("turno") or "").capitalize()
+    bolsa = {"sim": "Sim", "nao": "Não"}.get(d.get("bolsa"), None)
+    return [
+        ("titulo", "TERMO DE JUSTIFICATIVA DE FALTA"),
+        ("secao", "IDENTIFICAÇÃO DO ALUNO(A):"),
+        ("campo", "Aluno(a)", (a.get("social") or a.get("nome") or "").upper()),
+        ("campo", "Série/Turma", _turma_texto(a), 0.55),
+        ("marcar", "Turno", ["Matutino", "Vespertino"], turno),
+        ("marcar", "Beneficiário do Bolsa Família", ["Sim", "Não"], bolsa),
+        ("espaco", 3),
+        ("campo", "Data da falta", d.get("data_falta", "")),
+        ("campo", "Quantidade de Faltas", d.get("qtd_faltas", "")),
+        ("secao", "MOTIVO DA AUSÊNCIA:"),
+        ("lista", MOTIVOS_FALTA, d.get("motivo"), d.get("motivo_outro", "")),
+        ("secao", "DECLARAÇÃO DO(A) RESPONSÁVEL:"),
+        ("par", [("Declaro, para os devidos fins, que a ausência do(a) aluno(a) acima identificado(a) na "
+                  "data informada ocorreu pelo motivo assinalado. Assumo a responsabilidade pelas "
+                  "informações prestadas, estando ciente de que a escola poderá solicitar esclarecimentos "
+                  "adicionais, se necessário.", False)], 0),
+        ("secao", "ASSINATURA E CONTATO DO(A) RESPONSÁVEL:"),
+        ("campo", "Nome do(a) responsável", (d.get("resp_nome") or "").upper()),
+        ("campo", "Telefone/WhatsApp", d.get("telefone", "")),
+        ("campo", "Assinatura", ""),
+        ("secao", "USO DA ESCOLA (Secretaria):"),
+        ("campo", "Recebido por", "", 0.75),
+        ("campo", "Data do recebimento", hoje_br()),
+    ]
+
+
+def blocos_compromisso(cfg, a, d):
+    """Termo de Ciência, Compromisso e Responsabilidade (modelo do CEMASP)."""
+    def ou_linha(valor, tam=18):
+        return valor if valor else "_" * tam
+    par = d.get("parentesco")
+    marca = lambda k: "(X)" if par == k else "(   )"
+    aluno = (a.get("social") or a.get("nome") or "").upper()
+    endereco = a.get("endereco", "")
+    bairro = a.get("bairro", "")
+    if bairro and sem_acento(bairro) in sem_acento(endereco):
+        endereco = re.split(r"\s+–\s+", endereco)[0]          # o bairro vai no campo dele
+    ident = [
+        ("Eu, ", False), (ou_linha((d.get("resp_nome") or "").upper(), 40), True),
+        (", Identidade/CPF nº {}, profissão: {}, domiciliado(a) em {}, bairro {}, município de {}, "
+         "telefone {}, sou pai {} mãe {} responsável {} do(a) estudante ".format(
+             ou_linha(d.get("cpf")), ou_linha(d.get("profissao")), ou_linha(endereco, 30),
+             ou_linha(bairro), cfg.get("cidade") or "Manaus", ou_linha(d.get("telefone")),
+             marca("pai"), marca("mae"), marca("responsavel")), False),
+        (aluno, True),
+        (", matriculado(a) na Unidade de Ensino ", False), ((cfg.get("escola") or "").upper(), True),
+        (", Série/Ano {}, Turma {}, Turno {}, declaro para os devidos fins que estou ciente dos preceitos "
+         "legais e regulamentares, assim como ".format(
+             ou_linha(a.get("serie"), 8), ou_linha(a.get("turma"), 4), ou_linha((a.get("turno") or "").lower(), 10)), False),
+        ("atentarei para não incorrer no descumprimento deles, particularmente", True), (":", False),
+    ]
+    itens = [
+        [("A ", False), ("Constituição Federal, no Art 229, Cap. VII", True),
+         (", informa que os pais têm o dever de assistir e educar os filhos menores de idade.", False)],
+        [("A ", False), ("Lei 8.069/90, em seu Art. 129, Inciso V", True),
+         (", determina que os pais têm a “", False),
+         ("obrigação de matricular o filho ou pupilo e acompanhar sua frequência e aproveitamento escolar.", True),
+         ("”", False)],
+        [("A ", False), ("Lei de Diretrizes Bases da Educação (LDB), 9.394/96", True),
+         (", no artigo 2º diz que “", False), ("a educação é dever da família e do Estado", True), ("”.", False)],
+        [("O ", False), ("Estatuto da Criança e do Adolescente – ECA, Art. 22", True), (" adverte que ", False),
+         ("a omissão dos Direitos da Criança e do Adolescente ao acesso à educação configura-se como crime de "
+          "abandono intelectual, passível de penalidades", True), (".", False)],
+        [("O ", False), ("Código Penal no Art. 246", True), (" prevê ", False),
+         ("pena de detenção de 15 dias a 1 mês ou multa", True), (" nos casos de ", False),
+         ("deixar de prover a instrução primária de seus filhos de idade escolar", True), (".", False)],
+        [("A ", False), ("Lei nº 13.803/ 2019, VIII do art. 12", True), (" instrui “", False),
+         ("Notificar ao Conselho Tutelar do Município a relação dos alunos que apresentem quantidade de faltas "
+          "acima de 30% (trinta por cento) do percentual permitido em lei", True), ("”", False)],
+    ]
+    final = [
+        ("Declaro para os devidos fins de comprovação que o responsável pelo(a) aluno(a) acima identificado(a), "
+         "se fez presente nesta Unidade Educacional no dia {}, no horário de {} h, está ciente das orientações "
+         "fornecidas pelo CEMASP referentes ao compromisso de exercerem responsabilidade dos deveres inerentes "
+         "ao poder familiar e que em caso de ".format(hoje_br(), d.get("horario") or "____:____"), False),
+        ("reincidência de faltas não justificadas", True),
+        (", a Ficha de Controle do Aluno Infrequente (FICAI) será ", False),
+        ("encaminhada para o Conselho Tutelar", True),
+        (", para as devidas providências. E para constar, foi firmado o presente termo.", False),
+    ]
+    blocos = [("titulo", "TERMO DE CIÊNCIA, COMPROMISSO E RESPONSABILIDADE"), ("par", ident, 0)]
+    for letra, item in zip("abcdef", itens):
+        blocos.append(("item", letra, item))
+    blocos += [
+        ("par", final, 0),
+        ("secao", "ASSINATURAS:"),
+        ("assinatura_linha", "Pedagogo(a)", d.get("pedagogo", "")),
+        ("assinatura_linha", "Gestor(a) da escola", cfg.get("gestor_nome", "")),
+        ("assinatura_centro", "Assinatura do Responsável", (d.get("resp_nome") or "").upper()),
+    ]
+    return blocos
+
+
+def gerar_pdf_termo(caminho, cfg, cab_linhas, blocos, logo, titulo_doc):
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.units import mm
+    from reportlab.lib.enums import TA_JUSTIFY
+    from reportlab.lib.styles import ParagraphStyle
+    from reportlab.pdfgen import canvas as rl_canvas
+    from reportlab.platypus import Paragraph
+
+    largura, altura = A4
+    esq, dir_ = 20 * mm, 20 * mm
+    util = largura - esq - dir_
+    c = rl_canvas.Canvas(caminho, pagesize=A4)
+    c.setTitle(titulo_doc)
+    c.setAuthor(cfg.get("escola") or NOME_PROGRAMA)
+    c.setCreator(NOME_PROGRAMA)
+    preto = (0.07, 0.07, 0.07)
+
+    # cabeçalho
+    topo = altura - 14 * mm
+    lado = 20 * mm
+    if logo and os.path.exists(logo):
+        try:
+            c.drawImage(logo, esq, topo - lado, width=lado, height=lado,
+                        preserveAspectRatio=True, anchor="c", mask="auto")
+        except Exception:
+            pass
+    y = topo
+    for i, (texto, negrito, tam) in enumerate(cab_linhas):
+        y -= tam * 1.3
+        c.setFont("Helvetica-Bold" if negrito else "Helvetica", tam)
+        c.setFillColorRGB(*(AZUL_DOC if (negrito and tam >= 10) else preto))
+        c.drawCentredString(largura / 2, y, texto)
+    y = min(y, topo - lado) - 6 * mm
+
+    estilo = ParagraphStyle("t", fontName="Helvetica", fontSize=10.5, leading=15.5,
+                            alignment=TA_JUSTIFY, textColor=preto)
+
+    def marcado(pedacos):
+        return "".join("<b>{}</b>".format(xml_escape(t)) if n else xml_escape(t) for t, n in pedacos)
+
+    def linha_campo(rotulo, valor, fracao=1.0):
+        nonlocal y
+        y -= 8 * mm
+        c.setFont("Helvetica-Bold", 10.5)
+        c.setFillColorRGB(*preto)
+        texto = rotulo + ":"
+        c.drawString(esq, y, texto)
+        x0 = esq + c.stringWidth(texto, "Helvetica-Bold", 10.5) + 4
+        x1 = esq + util * fracao
+        c.setLineWidth(0.6)
+        c.line(x0, y - 2, x1, y - 2)
+        if valor:
+            c.setFont("Helvetica", 10.5)
+            c.drawString(x0 + 3, y + 1, valor)
+
+    for b in blocos:
+        tipo = b[0]
+        if tipo == "titulo":
+            y -= 4 * mm
+            c.setFont("Helvetica-Bold", 14)
+            c.setFillColorRGB(*preto)
+            c.drawCentredString(largura / 2, y, b[1])
+            y -= 4 * mm
+        elif tipo == "secao":
+            y -= 9 * mm
+            c.setFont("Helvetica-Bold", 10.5)
+            c.setFillColorRGB(*preto)
+            c.drawString(esq, y, b[1])
+            y += 1.5 * mm
+        elif tipo == "campo":
+            linha_campo(b[1], b[2], b[3] if len(b) > 3 else 1.0)
+        elif tipo == "marcar":
+            y -= 8 * mm
+            c.setFont("Helvetica-Bold", 10.5)
+            c.drawString(esq, y, b[1] + ":")
+            x = esq + c.stringWidth(b[1] + ":", "Helvetica-Bold", 10.5) + 6
+            c.setFont("Helvetica", 10.5)
+            for opc in b[2]:
+                texto = "( {} ) {}".format("X" if b[3] == opc else "  ", opc)
+                c.drawString(x, y, texto)
+                x += c.stringWidth(texto, "Helvetica", 10.5) + 12
+        elif tipo == "espaco":
+            y -= b[1] * mm
+        elif tipo == "lista":
+            opcoes, escolhido, outro = b[1], b[2], b[3]
+            c.setFont("Helvetica", 10.5)
+            for opc in opcoes:
+                y -= 6.5 * mm
+                c.drawString(esq, y, "( {} ) {};".format("X" if escolhido == opc else "  ", opc))
+            y -= 6.5 * mm
+            texto = "( {} ) Outro:".format("X" if escolhido == "Outro" else "  ")
+            c.drawString(esq, y, texto)
+            x0 = esq + c.stringWidth(texto, "Helvetica", 10.5) + 4
+            c.setLineWidth(0.6)
+            c.line(x0, y - 2, esq + util, y - 2)
+            if escolhido == "Outro" and outro:
+                c.drawString(x0 + 3, y + 1, outro)
+        elif tipo in ("par", "item"):
+            if tipo == "item":
+                est = ParagraphStyle("i", parent=estilo, leftIndent=8 * mm, firstLineIndent=-5 * mm,
+                                     fontSize=10, leading=14)
+                par = Paragraph("{})&nbsp;&nbsp;{}".format(b[1], marcado(b[2])), est)
+                espaco = 1.5 * mm
+            else:
+                par = Paragraph(marcado(b[1]), estilo)
+                espaco = 4 * mm
+            _, alt = par.wrap(util, y)
+            y -= espaco
+            par.drawOn(c, esq, y - alt)
+            y -= alt
+        elif tipo == "assinatura_linha":
+            y -= 11 * mm
+            c.setFont("Helvetica", 10.5)
+            c.setFillColorRGB(*preto)
+            texto = b[1] + ":"
+            c.drawString(esq, y, texto)
+            x0 = esq + c.stringWidth(texto, "Helvetica", 10.5) + 4
+            c.setLineWidth(0.6)
+            c.line(x0, y - 2, x0 + 95 * mm, y - 2)
+            if b[2]:
+                c.setFont("Helvetica", 8)
+                c.setFillColorRGB(0.35, 0.35, 0.35)
+                c.drawCentredString(x0 + 47.5 * mm, y - 5.5 * mm, b[2])
+        elif tipo == "assinatura_centro":
+            y -= 18 * mm
+            c.setStrokeColorRGB(*preto)
+            c.setLineWidth(0.6)
+            c.line(largura / 2 - 50 * mm, y, largura / 2 + 50 * mm, y)
+            c.setFont("Helvetica-Bold", 10)
+            c.setFillColorRGB(*preto)
+            c.drawCentredString(largura / 2, y - 4.5 * mm, b[1])
+            if b[2]:
+                c.setFont("Helvetica", 8.5)
+                c.drawCentredString(largura / 2, y - 8.5 * mm, b[2])
+    c.showPage()
+    c.save()
+
+
+def gerar_word_termo(caminho, cfg, cab_linhas, blocos, logo):
+    from docx import Document
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+    from docx.shared import Pt, Cm
+
+    doc = Document()
+    sec = doc.sections[0]
+    sec.page_width, sec.page_height = Cm(21), Cm(29.7)
+    sec.left_margin = sec.right_margin = Cm(2)
+    sec.top_margin, sec.bottom_margin = Cm(1.4), Cm(1.4)
+    normal = doc.styles["Normal"]
+    normal.font.name = "Arial"
+    normal.font.size = Pt(10.5)
+
+    def par(alinhar=WD_ALIGN_PARAGRAPH.LEFT, antes=0, depois=2):
+        p = doc.add_paragraph()
+        p.alignment = alinhar
+        p.paragraph_format.space_before = Pt(antes)
+        p.paragraph_format.space_after = Pt(depois)
+        return p
+
+    if logo and os.path.exists(logo):
+        try:
+            par(WD_ALIGN_PARAGRAPH.CENTER).add_run().add_picture(logo, height=Cm(1.8))
+        except Exception:
+            pass
+    for texto, negrito, tam in cab_linhas:
+        r = par(WD_ALIGN_PARAGRAPH.CENTER, depois=0).add_run(texto)
+        r.bold, r.font.size = negrito, Pt(tam)
+    for b in blocos:
+        t = b[0]
+        if t == "titulo":
+            r = par(WD_ALIGN_PARAGRAPH.CENTER, antes=14, depois=8).add_run(b[1])
+            r.bold, r.font.size = True, Pt(14)
+        elif t == "secao":
+            par(antes=10).add_run(b[1]).bold = True
+        elif t == "campo":
+            p = par(antes=4)
+            p.add_run(b[1] + ": ").bold = True
+            p.add_run(b[2] if b[2] else "_" * 60)
+        elif t == "marcar":
+            p = par(antes=4)
+            p.add_run(b[1] + ": ").bold = True
+            p.add_run("   ".join("( {} ) {}".format("X" if b[3] == o else " ", o) for o in b[2]))
+        elif t == "lista":
+            for o in b[1]:
+                par().add_run("( {} ) {};".format("X" if b[2] == o else " ", o))
+            par().add_run("( {} ) Outro: {}".format("X" if b[2] == "Outro" else " ",
+                                                    b[3] if b[2] == "Outro" and b[3] else "_" * 50))
+        elif t in ("par", "item"):
+            p = par(WD_ALIGN_PARAGRAPH.JUSTIFY, antes=6 if t == "par" else 2)
+            if t == "item":
+                p.paragraph_format.left_indent = Cm(0.8)
+                p.add_run(b[1] + ")  ")
+                pedacos = b[2]
+            else:
+                pedacos = b[1]
+            for texto, negrito in pedacos:
+                p.add_run(texto).bold = negrito
+        elif t == "assinatura_linha":
+            p = par(antes=16)
+            p.add_run("{}: {}".format(b[1], "_" * 45))
+            if b[2]:
+                par().add_run(" " * 30 + b[2]).font.size = Pt(8)
+        elif t == "assinatura_centro":
+            par(WD_ALIGN_PARAGRAPH.CENTER, antes=30).add_run("_" * 50)
+            par(WD_ALIGN_PARAGRAPH.CENTER).add_run(b[1]).bold = True
+            if b[2]:
+                par(WD_ALIGN_PARAGRAPH.CENTER).add_run(b[2]).font.size = Pt(8.5)
+    doc.save(caminho)
+
+
+def cabecalho_escola(cfg):
+    linhas = []
+    for k in ("cab1", "cab2"):
+        if cfg.get(k):
+            linhas.append((cfg[k].upper(), False, 9.5))
+    linhas.append(((cfg.get("escola") or "NOME DA ESCOLA").upper(), True, 11))
+    if cfg.get("endereco"):
+        linhas.append((cfg["endereco"].upper(), False, 9))
+    if cfg.get("telefone"):
+        linhas.append(("FONE: " + cfg["telefone"], False, 9))
+    return linhas
+
+
+def cabecalho_cemasp(cfg):
+    return [(t, True, 9) for t in CABECALHO_CEMASP]
 
 
 def abrir_arquivo(caminho):
@@ -1382,11 +1750,11 @@ class Aplicacao(tk.Tk):
         externo.grid(row=1, column=1, sticky="nsew", padx=(8, 0), pady=(0, 12))
         grade = tk.Frame(c3, bg=COR_CARTAO)
         grade.pack(fill="x")
-        for i, (chave, nome, _t) in enumerate(TIPOS):
-            if i % 3 == 0:
-                fileira = tk.Frame(grade, bg=COR_CARTAO)
-                fileira.pack(fill="x", pady=(0, 6))
-            Chip(fileira, nome, self.var_tipo, chave).pack(side="left", padx=(0, 6))
+        for chaves in FILEIRAS_TIPOS:
+            fileira = tk.Frame(grade, bg=COR_CARTAO)
+            fileira.pack(fill="x", pady=(0, 6))
+            for chave in chaves:
+                Chip(fileira, NOME_TIPO[chave], self.var_tipo, chave).pack(side="left", padx=(0, 6))
         self.area_extras = tk.Frame(c3, bg=COR_CARTAO)
         self.area_extras.pack(fill="both", expand=True, pady=(4, 0))
         self._montar_extras()
@@ -1464,6 +1832,14 @@ class Aplicacao(tk.Tk):
             q.pack(side="left", padx=(8, 0))
             e[chave].trace_add("write", lambda *_, v=e[chave], w=q.entrada: self._mascara_hora(v, w))
         self.extras["comparecimento"] = f
+
+        for chave, texto in (("justificativa", "Ao clicar em Gerar, abre uma janela para escolher o responsável,\n"
+                                                 "a data e a quantidade de faltas, o motivo e o Bolsa Família."),
+                             ("compromisso", "Ao clicar em Gerar, abre uma janela para escolher o responsável e\n"
+                                               "conferir CPF, profissão, horário e o nome do(a) pedagogo(a).")):
+            f = tk.Frame(self.area_extras, bg=COR_CARTAO)
+            rotulo(f, texto, fraco=True, tam=9, justify="left").pack(anchor="w")
+            self.extras[chave] = f
 
     def _mascara_hora(self, var, entrada):
         """Hora sempre no formato 00:00: só números, os dois-pontos entram sozinhos."""
@@ -1794,6 +2170,9 @@ class Aplicacao(tk.Tk):
         if not self.aluno:
             self.var_status.set("Escolha um aluno primeiro.")
             return
+        if self.var_tipo.get() in TERMOS:
+            JanelaTermo(self, self.var_tipo.get(), self.aluno)
+            return
         if self.var_tipo.get() == "comparecimento":
             if not self.ext["resp_nome"].get().strip():
                 self.var_status.set("Digite o nome da pessoa que compareceu.")
@@ -1862,6 +2241,48 @@ class Aplicacao(tk.Tk):
         self.var_status.set("Declaração {}de {} gerada e aberta para imprimir: {}".format(
             numero_txt + " " if numero_txt else "", nome_aluno, os.path.basename(arquivos[0])))
 
+    def gerar_termo(self, tipo, dados):
+        """Chamado pela janela do termo depois de completar os dados."""
+        cfg = self.cfg
+        if not cfg.get("pdf") and not cfg.get("word"):
+            cfg["pdf"] = True
+        a = self.aluno
+        agora = datetime.now()
+        if tipo == "justificativa":
+            blocos, cab = blocos_justificativa(cfg, a, dados), cabecalho_escola(cfg)
+        else:
+            blocos, cab = blocos_compromisso(cfg, a, dados), cabecalho_cemasp(cfg)
+        pasta = os.path.join(cfg.get("pasta_saida") or os.path.join(pasta_documentos(), "Declarações Escolares"),
+                             str(agora.year))
+        nome_aluno = a.get("social") or a.get("nome") or "Aluno"
+        base = nome_arquivo_seguro("{} - {} - {}".format(agora.strftime("%Y%m%d-%H%M%S"), NOME_TIPO[tipo],
+                                                          nome_aluno.upper()))
+        logo = os.path.join(pasta_dados(), ARQ_LOGO)
+        logo = logo if os.path.exists(logo) else ""
+        arquivos = []
+        try:
+            os.makedirs(pasta, exist_ok=True)
+            if cfg.get("pdf"):
+                arquivos.append(os.path.join(pasta, base + ".pdf"))
+                gerar_pdf_termo(arquivos[-1], cfg, cab, blocos, logo, TITULO_TIPO[tipo].title())
+            if cfg.get("word"):
+                arquivos.append(os.path.join(pasta, base + ".docx"))
+                gerar_word_termo(arquivos[-1], cfg, cab, blocos, logo)
+        except PermissionError:
+            messagebox.showerror(NOME_PROGRAMA, "O arquivo está aberto em outro programa. Feche-o e tente de novo.")
+            return False
+        except Exception as erro:
+            messagebox.showerror(NOME_PROGRAMA, "Não foi possível gerar o termo:\n{}".format(erro))
+            return False
+        hist = ler_json(ARQ_HISTORICO, [])
+        hist.append({"data": agora.isoformat(timespec="seconds"), "numero": None, "tipo": tipo,
+                     "aluno": nome_aluno, "codigo": a.get("matricula", ""), "arquivo": arquivos[0]})
+        gravar_json(ARQ_HISTORICO, hist[-2000:])
+        self.ultimo_arquivo = arquivos[0]
+        abrir_arquivo(arquivos[0])
+        self.var_status.set("{} de {} gerado e aberto para imprimir.".format(NOME_TIPO[tipo], nome_aluno))
+        return True
+
     def _abrir_pasta(self):
         pasta = os.path.dirname(self.ultimo_arquivo) if self.ultimo_arquivo else \
             os.path.join(self.cfg.get("pasta_saida") or os.path.join(pasta_documentos(), "Declarações Escolares"))
@@ -1891,6 +2312,166 @@ class Aplicacao(tk.Tk):
 
     def configuracao_salva(self):
         self._atualizar_relogio()
+
+
+class JanelaTermo(tk.Toplevel):
+    """Completa o Termo de Justificativa de Falta ou o Termo de Compromisso antes de gerar."""
+
+    def __init__(self, app, tipo, aluno):
+        super().__init__(app)
+        self.app, self.tipo, self.aluno = app, tipo, aluno
+        self.title(NOME_TIPO[tipo] + " – " + NOME_PROGRAMA)
+        self.configure(bg=COR_FUNDO)
+        self.transient(app)
+        self.resizable(False, False)
+        externo, c, _ = cartao(self, TITULO_TIPO[tipo].capitalize(), "✎")
+        externo.pack(fill="both", expand=True, padx=18, pady=18)
+        rotulo(c, "Aluno(a): {}   ·   {}".format(aluno.get("social") or aluno.get("nome"), _turma_texto(aluno)),
+               negrito=True).pack(anchor="w", pady=(0, 8))
+
+        # responsável: os do arquivo para escolher; "Outra pessoa" para digitar
+        self.var_resp = tk.StringVar()
+        self.var_nome = tk.StringVar()
+        self.var_fone = tk.StringVar(value=aluno.get("telefone", ""))
+        self.var_cpf = tk.StringVar()
+        tk.Label(c, text="Responsável", bg=COR_CARTAO, fg=COR_TEXTO_FRACO,
+                 font=(FONTE, 9, "bold")).pack(anchor="w")
+        linha = tk.Frame(c, bg=COR_CARTAO)
+        linha.pack(fill="x", pady=(2, 0))
+        self.opcoes = app._responsaveis(aluno)
+        for r, _n in self.opcoes:
+            Chip(linha, r, self.var_resp, r).pack(side="left", padx=(0, 6))
+        Chip(linha, "Outra pessoa", self.var_resp, "Outra pessoa").pack(side="left")
+        self.linha_nome = tk.Frame(c, bg=COR_CARTAO, height=34)
+        self.linha_nome.pack(fill="x", pady=(4, 0))
+        self.linha_nome.pack_propagate(False)
+        self.rot_nome = tk.Label(self.linha_nome, text="", bg=COR_CARTAO, fg=COR_TEXTO, font=(FONTE, 10, "bold"),
+                                 anchor="w")
+        self.ent_nome = tk.Frame(self.linha_nome, bg=COR_CARTAO)
+        tk.Label(self.ent_nome, text="Nome:", bg=COR_CARTAO, fg=COR_TEXTO_FRACO,
+                 font=(FONTE, 9, "bold")).pack(side="left", padx=(0, 6))
+        self.entrada_nome = ttk.Entry(self.ent_nome, textvariable=self.var_nome, style="Campo.TEntry", font=(FONTE, 10))
+        self.entrada_nome.pack(side="left", fill="x", expand=True)
+        self.var_resp.trace_add("write", lambda *_: self._ao_mudar_resp())
+
+        grade = tk.Frame(c, bg=COR_CARTAO)
+        grade.pack(fill="x", pady=(6, 0))
+        if tipo == "justificativa":
+            self.var_bolsa = tk.StringVar(value="")
+            self.var_data = tk.StringVar(value=hoje_br())
+            self.var_qtd = tk.StringVar(value="1")
+            self.var_motivo = tk.StringVar(value="")
+            self.var_outro = tk.StringVar()
+            campo(grade, "Telefone/WhatsApp", self.var_fone, largura=18).grid(row=0, column=0, sticky="w", padx=(0, 10))
+            campo(grade, "Data da falta", self.var_data, largura=24).grid(row=0, column=1, sticky="w", padx=(0, 10))
+            campo(grade, "Quantidade de faltas", self.var_qtd, largura=8).grid(row=0, column=2, sticky="w")
+            tk.Label(c, text="Beneficiário do Bolsa Família", bg=COR_CARTAO, fg=COR_TEXTO_FRACO,
+                     font=(FONTE, 9, "bold")).pack(anchor="w", pady=(8, 0))
+            linha = tk.Frame(c, bg=COR_CARTAO)
+            linha.pack(fill="x", pady=(2, 0))
+            for texto, valor in (("Sim", "sim"), ("Não", "nao"), ("Deixar em branco", "")):
+                Chip(linha, texto, self.var_bolsa, valor).pack(side="left", padx=(0, 6))
+            tk.Label(c, text="Motivo da ausência", bg=COR_CARTAO, fg=COR_TEXTO_FRACO,
+                     font=(FONTE, 9, "bold")).pack(anchor="w", pady=(8, 0))
+            opcoes = [("Em branco (o responsável marca)", "")] + [(m, m) for m in MOTIVOS_FALTA] + [("Outro", "Outro")]
+            bloco = tk.Frame(c, bg=COR_CARTAO)
+            bloco.pack(fill="x", pady=(2, 0))
+            for i, (texto, valor) in enumerate(opcoes):
+                Chip(bloco, texto, self.var_motivo, valor).grid(row=i // 2, column=i % 2, sticky="w",
+                                                              padx=(0, 6), pady=(0, 4))
+            caixa_outro = tk.Frame(c, bg=COR_CARTAO)        # fica logo abaixo das opções de motivo
+            caixa_outro.pack(fill="x")
+            self.campo_outro = campo(caixa_outro, "Qual outro motivo?", self.var_outro)
+            self.var_motivo.trace_add("write", lambda *_: self._ao_mudar_motivo())
+            self._ao_mudar_motivo()
+        else:
+            agora = datetime.now()
+            self.var_prof = tk.StringVar()
+            self.var_hora = tk.StringVar(value=agora.strftime("%H:%M"))
+            self.var_ped = tk.StringVar(value=app.cfg.get("pedagogo_nome", ""))
+            campo(grade, "CPF do responsável", self.var_cpf, largura=18).grid(row=0, column=0, sticky="w", padx=(0, 10))
+            campo(grade, "Profissão (opcional)", self.var_prof, largura=24).grid(row=0, column=1, sticky="w", padx=(0, 10))
+            campo(grade, "Telefone", self.var_fone, largura=16).grid(row=0, column=2, sticky="w")
+            grade2 = tk.Frame(c, bg=COR_CARTAO)
+            grade2.pack(fill="x", pady=(6, 0))
+            q = campo(grade2, "Horário", self.var_hora, largura=7)
+            q.entrada.configure(justify="center")
+            q.grid(row=0, column=0, sticky="w", padx=(0, 10))
+            self.var_hora.trace_add("write", lambda *_: app._mascara_hora(self.var_hora, q.entrada))
+            campo(grade2, "Pedagogo(a) (opcional)", self.var_ped, largura=40).grid(row=0, column=1, sticky="w")
+            rotulo(c, "O endereço, o bairro e a turma saem do arquivo. A data é a de hoje.",
+                   fraco=True, tam=9).pack(anchor="w", pady=(6, 0))
+
+        botoes = tk.Frame(c, bg=COR_CARTAO)
+        botoes.pack(fill="x", pady=(14, 0))
+        self.aviso = rotulo(botoes, "", tam=9)
+        self.aviso.configure(fg=COR_LARANJA)
+        self.aviso.pack(side="left")
+        Botao(botoes, "▶  Gerar termo", self._gerar, estilo="principal", fonte=(FONTE, 11, "bold"),
+              pad_x=22).pack(side="right")
+        Botao(botoes, "Cancelar", self.destroy).pack(side="right", padx=(0, 8))
+        self.var_resp.set(self.opcoes[0][0] if self.opcoes else "Outra pessoa")
+        self.update_idletasks()
+        x = app.winfo_rootx() + max((app.winfo_width() - self.winfo_reqwidth()) // 2, 0)
+        y = app.winfo_rooty() + max((app.winfo_height() - self.winfo_reqheight()) // 2, 0)
+        self.geometry("+{}+{}".format(x, y))
+        self.grab_set()
+
+    def _ao_mudar_resp(self):
+        escolha = self.var_resp.get()
+        nome = dict(self.opcoes).get(escolha, "")
+        if nome:
+            self.var_nome.set(nome)
+            self.ent_nome.pack_forget()
+            self.rot_nome.configure(text="{}:  {}".format(escolha, nome))
+            self.rot_nome.pack(fill="x", pady=(4, 0))
+        else:
+            self.var_nome.set("")
+            self.rot_nome.pack_forget()
+            self.ent_nome.pack(fill="x", pady=(2, 0))
+            self.entrada_nome.focus_set()
+        # o CPF do arquivo é de quem fez a matrícula
+        a = self.aluno
+        if nome and a.get("cpf_resp") and sem_acento(nome) == sem_acento(a.get("responsavel") or a.get("mae") or ""):
+            self.var_cpf.set(a["cpf_resp"])
+        else:
+            self.var_cpf.set("")
+
+    def _ao_mudar_motivo(self):
+        if self.var_motivo.get() == "Outro":
+            self.campo_outro.pack(fill="x", pady=(4, 0))
+            self.campo_outro.entrada.focus_set()
+        else:
+            self.campo_outro.pack_forget()
+
+    def _gerar(self):
+        nome = self.var_nome.get().strip()
+        if not nome:
+            self.aviso.configure(text="Digite o nome do responsável.")
+            self.entrada_nome.focus_set()
+            return
+        escolha = self.var_resp.get()
+        dados = {"resp_nome": nome, "telefone": self.var_fone.get().strip(),
+                 "parentesco": {"Mãe": "mae", "Pai": "pai"}.get(escolha, "responsavel")}
+        if self.tipo == "justificativa":
+            dados.update(bolsa=self.var_bolsa.get(), data_falta=self.var_data.get().strip(),
+                         qtd_faltas=self.var_qtd.get().strip(), motivo=self.var_motivo.get(),
+                         motivo_outro=self.var_outro.get().strip())
+            if dados["motivo"] == "Outro" and not dados["motivo_outro"]:
+                self.aviso.configure(text="Escreva qual é o outro motivo.")
+                return
+        else:
+            if self.var_hora.get() and not self.app._hora_valida(self.var_hora.get()):
+                self.aviso.configure(text="Confira o horário (formato 14:30).")
+                return
+            dados.update(cpf=formatar_cpf(self.var_cpf.get()) or self.var_cpf.get().strip(),
+                         profissao=self.var_prof.get().strip(), horario=self.var_hora.get().strip(),
+                         pedagogo=self.var_ped.get().strip())
+            if dados["pedagogo"] != self.app.cfg.get("pedagogo_nome", ""):
+                self.app.cfg["pedagogo_nome"] = dados["pedagogo"]
+                gravar_json(ARQ_CONFIG, self.app.cfg)
+        if self.app.gerar_termo(self.tipo, dados):
+            self.destroy()
 
 
 class JanelaConfiguracao(tk.Toplevel):
