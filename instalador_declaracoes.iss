@@ -32,6 +32,9 @@ WizardStyle=modern
 PrivilegesRequired=lowest
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
+; Se o programa estiver aberto, o instalador fecha antes de trocar o arquivo
+; (senão dá "DeleteFile falhou; código 5. Acesso negado").
+CloseApplications=force
 
 [Languages]
 Name: "brazilianportuguese"; MessagesFile: "compiler:Languages\BrazilianPortuguese.isl"
@@ -55,3 +58,14 @@ Name: "{autodesktop}\{#MeuApp}";        Filename: "{app}\{#MeuExe}"; \
 Filename: "{app}\{#MeuExe}"; \
     Description: "Abrir o {#MeuApp} agora"; \
     Flags: nowait postinstall skipifsilent
+
+[Code]
+function PrepareToInstall(var NeedsRestart: Boolean): String;
+var
+  ResultCode: Integer;
+begin
+  Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /IM {#MeuExe}', '', SW_HIDE,
+       ewWaitUntilTerminated, ResultCode);
+  Sleep(800);
+  Result := '';
+end;
