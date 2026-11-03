@@ -2125,7 +2125,7 @@ class Aplicacao(tk.Tk):
         self._desenhar_linhas(self.todos_achados)
         if len(achados) == 1:
             self._clicar_resultado(0)
-            self.var_status.set("1 aluno encontrado e escolhido. Escolha o tipo e clique em Gerar declaração.")
+            self.var_status.set("Aluno encontrado e escolhido. Escolha o tipo e clique em Gerar declaração.")
         else:
             extra = " (mostrando os 100 primeiros)" if len(achados) > 100 else ""
             self.var_status.set("{} alunos encontrados{}. Clique no aluno certo.".format(len(achados), extra))
@@ -2140,16 +2140,6 @@ class Aplicacao(tk.Tk):
             self._linha_resultado(i, a)
         self.tela.yview_moveto(0)
         self.after_idle(self._ajustar_rolagem)
-
-    def _ver_outros(self):
-        """Volta a mostrar todos os encontrados (o escolhido continua marcado)."""
-        escolhido = self.achados[0] if self.achados else None
-        self._desenhar_linhas(self.todos_achados)
-        if escolhido is not None and escolhido in self.achados:
-            self.escolhido = self.achados.index(escolhido)
-            self._pintar_linha(self.escolhido)
-            self.after_idle(lambda: self.tela.yview_moveto(max(self.escolhido - 1, 0) / max(len(self.achados), 1)))
-        self.var_status.set("Clique no aluno certo.")
 
     def _linha_resultado(self, i, a):
         linha = tk.Frame(self.linhas, bg=COR_LINHA, highlightthickness=1, highlightbackground=COR_BORDA,
@@ -2191,19 +2181,14 @@ class Aplicacao(tk.Tk):
         seta.configure(text=texto_seta, fg=COR_VERDE if n == self.escolhido else COR_AZUL)
 
     def _clicar_resultado(self, n):
-        """Escolhe o aluno e deixa na lista só ele (com 'Ver os outros' se houver mais)."""
+        """Escolhe o aluno: o nome vai para o campo de pesquisa e a lista de opções some."""
         a = self.achados[n]
         self._escolher(a)
-        self._desenhar_linhas([a])
-        self.escolhido = 0
-        self._pintar_linha(0)
-        outros = len(getattr(self, "todos_achados", [])) - 1
-        if outros > 0:
-            linha = self.linhas_resultado[0][0]
-            link = tk.Label(linha, text="Ver os outros ({})".format(outros), bg=linha["bg"], fg=COR_AZUL,
-                            font=(FONTE, 9, "underline"), cursor="hand2")
-            link.pack(side="right", padx=(0, 4))
-            link.bind("<Button-1>", lambda e: self._ver_outros())
+        self.var_busca.set(a.get("social") or a.get("nome") or "")
+        self.entrada_busca.icursor("end")
+        self._limpar_resultados()
+        self.quadro_lista.place_forget()
+        self.dica_result.place_forget()
 
     def _escolher(self, a):
         self.aluno = {k: v for k, v in a.items() if not k.startswith("_")}

@@ -15,9 +15,8 @@ DECLARAÇÕES ESCOLARES - como usar
    - Digite o nome do aluno (ou só uma parte dele, ou o código) e clique em
      "Pesquisar" (ou aperte Enter).
    - Aparecem os alunos encontrados. Clique no certo (se só um for encontrado,
-     ele já é escolhido sozinho). Depois do clique, a lista fica só com o
-     aluno escolhido; "Ver os outros" mostra a lista de novo. Os dados aparecem
-     no quadro "Aluno".
+     ele já é escolhido sozinho). Ao clicar, o nome vai para o campo de
+     pesquisa e a lista some. Os dados aparecem no quadro "Aluno".
    - Escolha o tipo: Matrícula, Frequência, Transferência, Conclusão,
      Comparecimento, Justificativa de falta ou Termo de compromisso.
    - Em "Quem assina", escolha Gestor(a) ou Secretário(a).
