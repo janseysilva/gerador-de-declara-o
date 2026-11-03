@@ -896,7 +896,7 @@ def dados_termo(a):
 def blocos_justificativa(cfg, a, d):
     """Termo de Justificativa de Falta (modelo da escola)."""
     turno = (a.get("turno") or "").capitalize()
-    bolsa = None                          # não está no arquivo: o responsável marca
+    bolsa = {"Sim": "Sim", "Não": "Não"}.get(d.get("bolsa"))
     return [
         ("titulo", "TERMO DE JUSTIFICATIVA DE FALTA"),
         ("secao", "IDENTIFICAÇÃO DO ALUNO(A):"),
@@ -905,18 +905,18 @@ def blocos_justificativa(cfg, a, d):
         ("marcar", "Turno", ["Matutino", "Vespertino"], turno),
         ("marcar", "Beneficiário do Bolsa Família", ["Sim", "Não"], bolsa),
         ("espaco", 3),
-        ("campo", "Data da falta", ""),
-        ("campo", "Quantidade de Faltas", ""),
+        ("campo", "Data da falta", d.get("data_falta", "")),
+        ("campo", "Quantidade de Faltas", d.get("qtd_faltas", "")),
         ("secao", "MOTIVO DA AUSÊNCIA:"),
-        ("lista", MOTIVOS_FALTA, None, ""),
+        ("lista", MOTIVOS_FALTA, d.get("motivo"), d.get("motivo_outro", "")),
         ("secao", "DECLARAÇÃO DO(A) RESPONSÁVEL:"),
         ("par", [("Declaro, para os devidos fins, que a ausência do(a) aluno(a) acima identificado(a) na "
                   "data informada ocorreu pelo motivo assinalado. Assumo a responsabilidade pelas "
                   "informações prestadas, estando ciente de que a escola poderá solicitar esclarecimentos "
                   "adicionais, se necessário.", False)], 0),
         ("secao", "ASSINATURA E CONTATO DO(A) RESPONSÁVEL:"),
-        ("campo", "Nome do(a) responsável", ""),
-        ("campo", "Telefone/WhatsApp", ""),
+        ("campo", "Nome do(a) responsável", (d.get("resp_nome") or "").upper()),
+        ("campo", "Telefone/WhatsApp", d.get("telefone", "")),
         ("campo", "Assinatura", ""),
         ("secao", "USO DA ESCOLA (Secretaria):"),
         ("campo", "Recebido por", "", 0.75),
@@ -1846,15 +1846,84 @@ class Aplicacao(tk.Tk):
             e[chave].trace_add("write", lambda *_, v=e[chave], w=q.entrada: self._mascara_hora(v, w))
         self.extras["comparecimento"] = f
 
-        for chave, texto in (("justificativa", "Sai com o aluno, a série/turma e o turno preenchidos.\n"
-                                                 "Bolsa Família, data e quantidade de faltas, motivo e os dados\n"
-                                                 "do responsável ficam em branco para preencher à mão."),
-                             ("compromisso", "Sai preenchido com o que está no arquivo: quem fez a matrícula,\n"
-                                               "CPF, endereço, bairro, telefone, série, turma e turno.\n"
-                                               "O que não estiver no arquivo (profissão, horário) fica em branco.")):
-            f = tk.Frame(self.area_extras, bg=COR_CARTAO)
-            rotulo(f, texto, fraco=True, tam=9, justify="left").pack(anchor="w")
-            self.extras[chave] = f
+        # Justificativa de falta: o que não vem do arquivo se preenche aqui
+        t = self.termo = {k: tk.StringVar() for k in (
+            "data_falta", "qtd_faltas", "bolsa", "motivo", "motivo_outro", "resp_nome", "telefone",
+            "profissao", "horario", "c_nome", "c_cpf")}
+        f = tk.Frame(self.area_extras, bg=COR_CARTAO)
+        linha = tk.Frame(f, bg=COR_CARTAO)
+        linha.pack(fill="x")
+        campo(linha, "Data da falta", t["data_falta"]).pack(side="left", fill="x", expand=True)
+        campo(linha, "Qtd. de faltas", t["qtd_faltas"], largura=8).pack(side="left", padx=(8, 0))
+        campo(linha, "Bolsa Família", t["bolsa"], opcoes=["", "Sim", "Não"], editavel=False,
+              largura=7).pack(side="left", padx=(8, 0))
+        linha = tk.Frame(f, bg=COR_CARTAO)
+        linha.pack(fill="x", pady=(4, 0))
+        campo(linha, "Motivo da ausência", t["motivo"], editavel=False,
+              opcoes=["(em branco)"] + MOTIVOS_FALTA + ["Outro"]).pack(side="left", fill="x", expand=True)
+        self.campo_motivo_outro = campo(linha, "Qual?", t["motivo_outro"], largura=18)
+        t["motivo"].trace_add("write", lambda *_: self._ao_mudar_motivo())
+        linha = tk.Frame(f, bg=COR_CARTAO)
+        linha.pack(fill="x", pady=(4, 0))
+        campo(linha, "Nome do responsável", t["resp_nome"]).pack(side="left", fill="x", expand=True)
+        campo(linha, "Telefone/WhatsApp", t["telefone"], largura=15).pack(side="left", padx=(8, 0))
+        self.extras["justificativa"] = f
+
+        # Termo de compromisso: o que vem do arquivo aparece para conferir; o resto se preenche aqui
+        f = tk.Frame(self.area_extras, bg=COR_CARTAO)
+        self.info_compromisso = tk.Label(f, text="", bg=COR_CARTAO, fg=COR_TEXTO, font=(FONTE, 9),
+                                         anchor="w", justify="left", wraplength=440)
+        self.info_compromisso.pack(fill="x")
+        linha = tk.Frame(f, bg=COR_CARTAO)
+        linha.pack(fill="x", pady=(6, 0))
+        campo(linha, "Profissão do responsável", t["profissao"]).pack(side="left", fill="x", expand=True)
+        q = campo(linha, "Horário", t["horario"], largura=7)
+        q.entrada.configure(justify="center")
+        q.pack(side="left", padx=(8, 0))
+        t["horario"].trace_add("write", lambda *_, w=q.entrada: self._mascara_hora(t["horario"], w))
+        self.linha_resp_compromisso = tk.Frame(f, bg=COR_CARTAO)
+        campo(self.linha_resp_compromisso, "Nome do responsável", t["c_nome"]).pack(side="left", fill="x", expand=True)
+        campo(self.linha_resp_compromisso, "CPF", t["c_cpf"], largura=15).pack(side="left", padx=(8, 0))
+        self.extras["compromisso"] = f
+
+    def _ao_mudar_motivo(self):
+        if self.termo["motivo"].get() == "Outro":
+            self.campo_motivo_outro.pack(side="left", padx=(8, 0))
+            self.campo_motivo_outro.entrada.focus_set()
+        else:
+            self.campo_motivo_outro.pack_forget()
+
+    def _preparar_termos(self, a):
+        """Ao escolher o aluno: limpa os campos dos termos e mostra o que vem do arquivo."""
+        t = self.termo
+        for k in ("data_falta", "qtd_faltas", "bolsa", "motivo_outro", "resp_nome", "profissao", "c_nome", "c_cpf"):
+            t[k].set("")
+        t["motivo"].set("(em branco)")
+        t["telefone"].set(a.get("telefone", ""))
+        t["horario"].set(datetime.now().strftime("%H:%M"))
+        d = dados_termo(a)
+        if d["resp_nome"]:
+            papel = {"mae": "mãe", "pai": "pai"}.get(d["parentesco"], "responsável")
+            self.info_compromisso.configure(text="Do arquivo: {} ({}){}. Endereço, telefone, série, turma e turno "
+                                                 "também saem do arquivo.".format(
+                                                     d["resp_nome"], papel, ", CPF " + d["cpf"] if d["cpf"] else ""))
+            self.linha_resp_compromisso.pack_forget()
+        else:
+            self.info_compromisso.configure(text="O arquivo não traz quem fez a matrícula. Preencha abaixo.")
+            self.linha_resp_compromisso.pack(fill="x", pady=(4, 0))
+
+    def _dados_termo_preenchidos(self, tipo):
+        t = {k: v.get().strip() for k, v in self.termo.items()}
+        d = dados_termo(self.aluno)
+        if tipo == "justificativa":
+            d.update(data_falta=t["data_falta"], qtd_faltas=t["qtd_faltas"], bolsa=t["bolsa"],
+                     motivo=None if t["motivo"] in ("", "(em branco)") else t["motivo"],
+                     motivo_outro=t["motivo_outro"], resp_nome=t["resp_nome"], telefone=t["telefone"])
+        else:
+            d.update(profissao=t["profissao"], horario=t["horario"])
+            if not d["resp_nome"] and t["c_nome"]:
+                d.update(resp_nome=t["c_nome"], cpf=formatar_cpf(t["c_cpf"]) or t["c_cpf"], parentesco="")
+        return d
 
     def _mascara_hora(self, var, entrada):
         """Hora sempre no formato 00:00: só números, os dois-pontos entram sozinhos."""
@@ -2014,6 +2083,7 @@ class Aplicacao(tk.Tk):
         agora = datetime.now()
         self.ext["proxima"].set(proxima_serie(a.get("serie")))
         self._parentesco_padrao(self.aluno)
+        self._preparar_termos(self.aluno)
         self.ext["hora_fim"].set(agora.strftime("%H:%M"))
         self.ext["hora_ini"].set("{:02d}:{:02d}".format(max(agora.hour - 1, 0), agora.minute))
         self.ext["freq"].set("")
@@ -2186,7 +2256,14 @@ class Aplicacao(tk.Tk):
             self.var_status.set("Escolha um aluno primeiro.")
             return
         if self.var_tipo.get() in TERMOS:
-            self.gerar_termo(self.var_tipo.get(), dados_termo(self.aluno))
+            tipo = self.var_tipo.get()
+            if tipo == "compromisso" and self.termo["horario"].get() and not self._hora_valida(self.termo["horario"].get()):
+                self.var_status.set("Confira o horário (formato 14:30).")
+                return
+            if tipo == "justificativa" and self.termo["motivo"].get() == "Outro" and not self.termo["motivo_outro"].get().strip():
+                self.var_status.set("Escreva qual é o outro motivo.")
+                return
+            self.gerar_termo(tipo, self._dados_termo_preenchidos(tipo))
             return
         if self.var_tipo.get() == "comparecimento":
             if not self.ext["resp_nome"].get().strip():
@@ -2295,7 +2372,7 @@ class Aplicacao(tk.Tk):
         gravar_json(ARQ_HISTORICO, hist[-2000:])
         self.ultimo_arquivo = arquivos[0]
         abrir_arquivo(arquivos[0])
-        self.var_status.set("{} de {} gerado e aberto para imprimir.".format(NOME_TIPO[tipo], nome_aluno))
+        self.var_status.set("Pronto: {} de {}, aberto para imprimir.".format(NOME_TIPO[tipo].lower(), nome_aluno))
         return True
 
     def _abrir_pasta(self):
