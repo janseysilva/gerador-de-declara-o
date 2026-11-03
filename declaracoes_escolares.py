@@ -1200,11 +1200,12 @@ class Aplicacao(tk.Tk):
         except tk.TclError:
             pass
         largura = min(960, self.winfo_screenwidth() - 40)
-        altura = min(750, self.winfo_screenheight() - 100)
+        # um pouco mais alta que o Frequência: o quadro 3 precisa caber inteiro com a Segoe UI
+        altura = min(800, self.winfo_screenheight() - 90)
         self.geometry("{}x{}+{}+{}".format(
             largura, altura, (self.winfo_screenwidth() - largura) // 2,
             max((self.winfo_screenheight() - altura) // 2 - 20, 0)))
-        self.minsize(860, 600)
+        self.minsize(860, 640)
         self.configure(bg=COR_FUNDO)
 
         self.cfg = dict(CONFIG_PADRAO)
@@ -1335,7 +1336,7 @@ class Aplicacao(tk.Tk):
         self.botao_pesquisar.pack(side="left", padx=(10, 0))
 
         # Resultado da pesquisa: só aparece depois de clicar em Pesquisar
-        self.area_result = tk.Frame(c1, bg=COR_CARTAO, height=112)
+        self.area_result = tk.Frame(c1, bg=COR_CARTAO, height=104)
         self.area_result.pack(fill="x", pady=(10, 0))
         self.area_result.pack_propagate(False)
         self.dica_result = tk.Label(self.area_result, text="", bg=COR_CARTAO, fg=COR_TEXTO_FRACO,
