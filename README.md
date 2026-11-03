@@ -4,7 +4,7 @@ Programa para Windows (Python + tkinter), com o mesmo visual do Frequência Inte
 
 O programa lê o arquivo de alunos exportado do sistema da SEMED (`TXTALUNO_xxxxx.txt`) e guarda os alunos como banco de dados no computador. Na tela, você pesquisa o aluno pelo nome ou pelo código, escolhe o tipo e clica em **Gerar declaração**. O PDF (ou Word) abre pronto para imprimir.
 
-Tipos: Matrícula, Frequência, Transferência, Conclusão, Vaga e Comparecimento. A data vem do relógio do computador, e o número da declaração (Nº 001/2026) sobe sozinho.
+Tipos: Matrícula, Frequência, Transferência, Conclusão e Comparecimento. A data vem do relógio do computador, e o número da declaração (Nº 001/2026) sobe sozinho.
 
 ## Baixar o instalador
 Na aba **Releases** deste repositório, baixe `Instalador_DeclaracoesEscolares.exe` e dê dois cliques. O instalador é montado num Windows do GitHub só quando alguém pede (aba **Actions** → *Instalador Declarações Escolares* → **Run workflow**); a receita está em `.github/workflows/instalador.yml`.

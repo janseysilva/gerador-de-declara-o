@@ -16,7 +16,7 @@ DECLARAÇÕES ESCOLARES - como usar
      "Pesquisar" (ou aperte Enter).
    - Aparecem os alunos encontrados. Clique no certo (se só um for encontrado,
      ele já é escolhido sozinho). Os dados aparecem no quadro "Aluno".
-   - Escolha o tipo: Matrícula, Frequência, Transferência, Conclusão, Vaga ou
+   - Escolha o tipo: Matrícula, Frequência, Transferência, Conclusão ou
      Comparecimento.
    - Em "Quem assina", escolha Gestor(a) ou Secretário(a).
    - Clique em "Gerar declaração". O PDF abre pronto para imprimir.

@@ -7,7 +7,7 @@ guarda como banco de dados no computador e gera a declaração pronta (PDF e/ou
 Word) com uma pesquisa pelo nome do aluno. Mesmo visual do Frequência
 Inteligente.
 
-Declarações: Matrícula, Frequência, Transferência, Conclusão, Vaga e
+Declarações: Matrícula, Frequência, Transferência, Conclusão e
 Comparecimento. A data sai do relógio do computador.
 
 Build do executável:
@@ -491,7 +491,6 @@ TIPOS = [
     ("frequencia", "Frequência", "DECLARAÇÃO DE FREQUÊNCIA"),
     ("transferencia", "Transferência", "DECLARAÇÃO DE TRANSFERÊNCIA"),
     ("conclusao", "Conclusão", "DECLARAÇÃO DE CONCLUSÃO"),
-    ("vaga", "Vaga", "DECLARAÇÃO DE VAGA"),
     ("comparecimento", "Comparecimento", "DECLARAÇÃO DE COMPARECIMENTO"),
 ]
 NOME_TIPO = {t[0]: t[1] for t in TIPOS}
@@ -606,15 +605,6 @@ def paragrafos(tipo, a, extras, ano_letivo):
         if x.get("proxima"):
             f += ", estando apt{} a cursar o {}".format(o, x["proxima"])
         p.append([ini] + q + [(f + ".", False)])
-
-    elif tipo == "vaga":
-        turno = ", turno " + a["turno"].lower() if a.get("turno") else ""
-        p.append([("Declaramos, para os devidos fins, que há vaga disponível nesta Unidade de "
-                   "Ensino para {} {} ".format(g["art"], g["aluno"]), False)]
-                 + q + [(", {}{}, no ano letivo de {}.".format(_curso(a, "no"), turno, ano_letivo), False)])
-        if str(x.get("validade") or "").strip():
-            p.append([("Esta declaração tem validade de {} dias a contar da data de "
-                       "emissão.".format(x["validade"]), False)])
 
     elif tipo == "comparecimento":
         nome_aluno = (a.get("social") or a.get("nome") or "").upper()
@@ -1393,8 +1383,10 @@ class Aplicacao(tk.Tk):
         grade = tk.Frame(c3, bg=COR_CARTAO)
         grade.pack(fill="x")
         for i, (chave, nome, _t) in enumerate(TIPOS):
-            Chip(grade, nome, self.var_tipo, chave).grid(
-                row=i // 3, column=i % 3, sticky="w", padx=(0, 6), pady=(0, 6))
+            if i % 3 == 0:
+                fileira = tk.Frame(grade, bg=COR_CARTAO)
+                fileira.pack(fill="x", pady=(0, 6))
+            Chip(fileira, nome, self.var_tipo, chave).pack(side="left", padx=(0, 6))
         self.area_extras = tk.Frame(c3, bg=COR_CARTAO)
         self.area_extras.pack(fill="both", expand=True, pady=(4, 0))
         self._montar_extras()
@@ -1446,10 +1438,6 @@ class Aplicacao(tk.Tk):
               editavel=False).grid(row=0, column=0, sticky="ew")
         campo(f, "Apto(a) a cursar", e["proxima"]).grid(row=1, column=0, sticky="ew", pady=(6, 0))
         self.extras["conclusao"] = f
-
-        f = tk.Frame(self.area_extras, bg=COR_CARTAO)
-        campo(f, "Validade (dias)", e["validade"], largura=8).pack(anchor="w")
-        self.extras["vaga"] = f
 
         f = tk.Frame(self.area_extras, bg=COR_CARTAO)
         self.chips_resp = tk.Frame(f, bg=COR_CARTAO)
