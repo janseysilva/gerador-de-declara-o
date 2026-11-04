@@ -24,7 +24,9 @@ import base64
 import struct
 import shutil
 import subprocess
+import time
 import unicodedata
+import webbrowser
 from datetime import datetime
 from xml.sax.saxutils import escape as xml_escape
 
@@ -67,6 +69,34 @@ ARQ_ALUNOS = "alunos.json"
 ARQ_HISTORICO = "historico.json"
 ARQ_LOGO = "logotipo.png"
 ARQ_FREQ = "frequencia.json"
+GIER_URL = "https://app-manaus-mvc-prd-frontend-001.azurewebsites.net/Relatorio/RelatorioFiltro/348"
+VIGIA_MINUTOS = 30          # a vigia da pasta Downloads para sozinha depois disso sem PDF novo
+
+
+def pasta_downloads():
+    """Pasta Downloads do Windows (mesmo se tiver sido mudada de lugar)."""
+    if sys.platform.startswith("win"):
+        try:
+            import ctypes
+            from ctypes import wintypes
+
+            class GUID(ctypes.Structure):
+                _fields_ = [("d1", wintypes.DWORD), ("d2", wintypes.WORD), ("d3", wintypes.WORD),
+                            ("d4", ctypes.c_ubyte * 8)]
+            fid = GUID(0x374DE290, 0x123F, 0x4565, (ctypes.c_ubyte * 8)(0x91, 0x64, 0x39, 0xC4, 0x92, 0x5E, 0x46, 0x7B))
+            ptr = ctypes.c_wchar_p()
+            if ctypes.windll.shell32.SHGetKnownFolderPath(ctypes.byref(fid), 0, None, ctypes.byref(ptr)) == 0:
+                caminho = ptr.value
+                ctypes.windll.ole32.CoTaskMemFree(ptr)
+                if caminho and os.path.isdir(caminho):
+                    return caminho
+        except Exception:
+            pass
+    casa = os.path.expanduser("~")
+    for nome in ("Downloads", "Transferências"):
+        if os.path.isdir(os.path.join(casa, nome)):
+            return os.path.join(casa, nome)
+    return casa
 
 
 def ler_json(nome, padrao):
@@ -2000,6 +2030,8 @@ class Aplicacao(tk.Tk):
         campo(linha, "Frequência %", e["freq"], largura=10).pack(side="left", padx=(8, 0))
         self.aviso_freq = rotulo(f, "", fraco=True, tam=9, wraplength=440, justify="left")
         self.aviso_freq.pack(anchor="w", pady=(4, 0))
+        Botao(f, "Baixar do Gier", self.baixar_do_gier, estilo="tracejado",
+              fonte=(FONTE, 9, "bold"), pad_x=14, pad_y=6).pack(anchor="w", pady=(6, 0))
         e["freq_periodo"].trace_add("write", lambda *_: self._ao_mudar_periodo())
         self.extras["frequencia"] = f
 
@@ -2263,10 +2295,10 @@ class Aplicacao(tk.Tk):
             self._periodo_todos = ""
             self.ext["freq_periodo"].set("")
             self.ext["freq"].set("")
-            self.aviso_freq.configure(text="Sem frequência do Gier para este aluno. Abra o PDF do Gier na "
-                                           "Configuração ou digite a %." if self.freq.get("meses") else
-                                      "Para preencher sozinho, abra o PDF \"Acompanhamento Diário\" do Gier "
-                                      "na Configuração. Ou digite a %.")
+            self.aviso_freq.configure(text="Sem frequência do Gier para este aluno. Clique em "
+                                           "\"Baixar do Gier\" ou digite a %." if self.freq.get("meses") else
+                                      "Para preencher sozinho, clique em \"Baixar do Gier\". "
+                                      "Ou digite a %.")
 
     def _ao_mudar_periodo(self):
         regs = getattr(self, "freq_aluno", [])
@@ -2816,6 +2848,110 @@ class Aplicacao(tk.Tk):
     def _abrir_configuracao(self):
         JanelaConfiguracao(self)
 
+    # ----- Frequência: "Baixar do Gier" + vigia da pasta Downloads -----
+    def baixar_do_gier(self, pai=None):
+        pai = pai or self
+        pasta = pasta_downloads()
+        if not getattr(self, "_vigia", None):
+            messagebox.showinfo(NOME_PROGRAMA,
+                "O Gier vai abrir no navegador.\n\n"
+                "1. Entre com o seu usuário e senha.\n"
+                "2. Escolha a turma e, em MÊS, marque \"Todos\" (ou os meses que quiser).\n"
+                "3. Clique em Imprimir e baixe o PDF.\n"
+                "4. Repita para as outras turmas.\n\n"
+                "Cada PDF que chegar na pasta {} entra sozinho no programa. "
+                "Não precisa abrir nada aqui.".format(os.path.basename(pasta) or pasta), parent=pai)
+            self._vigia = {"pasta": pasta, "inicio": time.time() - 60, "ultimo": time.time(),
+                           "pendentes": {}, "feitos": {}, "recebidos": 0, "meses": set(),
+                           "turmas": set(), "erros": 0}
+            self.after(1500, self._vigiar_downloads)
+        try:
+            webbrowser.open(GIER_URL)
+        except Exception:
+            pass
+        self._avisar_vigia()
+
+    def atualizar_frequencia_tela(self):
+        """Frequência nova: refaz só a linha do quadro 2 e o % (sem apagar o que já foi digitado)."""
+        if self.aluno:
+            self._preparar_frequencia(self.aluno)
+            self._mostrar_aluno()
+            self._reajustar()
+
+    def parar_vigia_gier(self):
+        self._vigia = None
+        self._avisar_vigia()
+
+    def texto_vigia(self):
+        v = getattr(self, "_vigia", None)
+        if not v:
+            return ""
+        texto = "Esperando os PDFs do Gier na pasta {}...".format(os.path.basename(v["pasta"]) or v["pasta"])
+        if v["recebidos"]:
+            texto += "  {} PDF(s) recebido(s): {} turma(s), {}.".format(
+                v["recebidos"], len(v["turmas"]), ", ".join(sorted(v["meses"], key=_mes_chave)))
+        return texto
+
+    def _avisar_vigia(self):
+        texto = self.texto_vigia()
+        if texto:
+            self.var_status.set(texto)
+        elif self.alunos:
+            self.var_status.set("Escolha o tipo de declaração e clique em Gerar declaração.")
+        for funcao in list(getattr(self, "_ouvintes_vigia", [])):
+            try:
+                funcao()
+            except Exception:
+                self._ouvintes_vigia.remove(funcao)
+
+    def _vigiar_downloads(self):
+        v = getattr(self, "_vigia", None)
+        if not v:
+            return
+        if time.time() - v["ultimo"] > VIGIA_MINUTOS * 60:
+            self.parar_vigia_gier()
+            return
+        novos = []
+        try:
+            nomes = os.listdir(v["pasta"])
+        except OSError:
+            nomes = []
+        for nome in nomes:
+            if not nome.lower().endswith(".pdf"):
+                continue
+            caminho = os.path.join(v["pasta"], nome)
+            try:
+                st = os.stat(caminho)
+            except OSError:
+                continue
+            marca = (st.st_size, st.st_mtime)
+            if st.st_mtime < v["inicio"] or v["feitos"].get(caminho) == marca or not st.st_size:
+                continue
+            # só lê quando o arquivo parou de crescer (download terminado)
+            if v["pendentes"].get(caminho) == marca:
+                novos.append(caminho)
+                v["feitos"][caminho] = marca
+                v["pendentes"].pop(caminho, None)
+            else:
+                v["pendentes"][caminho] = marca
+        if novos:
+            import frequencia_gier as fg
+            do_gier = [c for c in novos if fg.parece_acompanhamento(c)]
+            if do_gier:
+                try:
+                    banco, resumo = importar_frequencia_pdfs(do_gier)
+                except Exception:
+                    banco, resumo = None, None
+                if resumo:
+                    self.freq = banco
+                    v["recebidos"] += resumo["arquivos"]
+                    v["meses"] |= resumo["meses"]
+                    v["turmas"] |= resumo["turmas"]
+                    v["ultimo"] = time.time()
+                    self.atualizar_frequencia_tela()
+                    self._avisar_vigia()
+        self.after(2000, self._vigiar_downloads)
+
     def importar_alunos(self, caminho):
         with open(caminho, "rb") as f:
             texto = decodificar(f.read())
@@ -2891,7 +3027,17 @@ class JanelaConfiguracao(tk.Toplevel):
                                    anchor="w", justify="left", highlightthickness=1,
                                    highlightbackground=COR_BORDA, padx=10, pady=6, wraplength=360)
         self.linha_freq.pack(fill="x", pady=(6, 8))
-        Botao(c, "Abrir frequência do Gier (PDF)...", self._importar_freq, estilo="tracejado").pack(anchor="w")
+        botoes = tk.Frame(c, bg=COR_CARTAO)
+        botoes.pack(anchor="w")
+        Botao(botoes, "Baixar do Gier", lambda: self.app.baixar_do_gier(self), estilo="azul").pack(side="left")
+        Botao(botoes, "Abrir PDF...", self._importar_freq, estilo="tracejado").pack(side="left", padx=(8, 0))
+        self.quadro_vigia = tk.Frame(c, bg=COR_CARTAO)
+        self.linha_vigia = rotulo(self.quadro_vigia, "", fraco=True, tam=9, wraplength=360, justify="left")
+        self.linha_vigia.pack(anchor="w")
+        Botao(self.quadro_vigia, "Parar de esperar", self.app.parar_vigia_gier, estilo="suave",
+              fonte=(FONTE, 9, "bold"), pad_x=12, pad_y=5).pack(anchor="w", pady=(4, 0))
+        self.app._ouvintes_vigia = [self._ao_mudar_vigia]
+        self._ao_mudar_vigia()
         self._mostrar_banco()
 
         # 3 - Declarações
@@ -2969,6 +3115,18 @@ class JanelaConfiguracao(tk.Toplevel):
         else:
             self.linha_freq.configure(text="Nenhuma frequência aberta ainda.")
 
+    def _ao_mudar_vigia(self):
+        if not self.winfo_exists():
+            raise tk.TclError("janela fechada")
+        texto = self.app.texto_vigia()
+        self.linha_vigia.configure(text=texto)
+        if texto and not self.quadro_vigia.winfo_manager():
+            self.quadro_vigia.pack(anchor="w", fill="x", pady=(8, 0))
+        elif not texto and self.quadro_vigia.winfo_manager():
+            self.quadro_vigia.pack_forget()
+        self._mostrar_banco()
+        self.area.ajustar()
+
     def _importar_freq(self):
         caminhos = filedialog.askopenfilenames(
             parent=self, title="Frequência do Gier (Acompanhamento Diário)",
@@ -2982,8 +3140,7 @@ class JanelaConfiguracao(tk.Toplevel):
             return
         self.app.freq = banco
         self._mostrar_banco()
-        if self.app.aluno:
-            self.app._escolher(self.app.aluno)
+        self.app.atualizar_frequencia_tela()
         texto = "{} arquivo(s) lido(s): {}, {} turma(s).".format(
             resumo["arquivos"], ", ".join(sorted(resumo["meses"], key=_mes_chave)) or "nenhum mês",
             len(resumo["turmas"]))

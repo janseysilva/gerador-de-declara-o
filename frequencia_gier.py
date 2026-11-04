@@ -423,3 +423,17 @@ def calcular_presenca(aluno):
     return presencas, percentual, ""
 
 
+
+
+def parece_acompanhamento(caminho_pdf):
+    """Olha so a 1a pagina: e um "Acompanhamento Diario" do Gier? (rapido)"""
+    textos = _textos_pdf_rapido(caminho_pdf, max_paginas=1)
+    if textos is None:
+        if pdfplumber is None:
+            return False
+        try:
+            with pdfplumber.open(caminho_pdf) as pdf:
+                textos = [(pdf.pages[0].extract_text() or "")] if pdf.pages else []
+        except Exception:
+            return False
+    return any(RE_TITULO_DIARIO.search(t or "") for t in textos)
