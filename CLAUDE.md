@@ -10,7 +10,7 @@ Programa do Windows (Python + tkinter) feito para o Jansey, do CMEI Argentina Ba
 4. Ele não preenche nada à mão: o que está no banco de dados sai sozinho, e o que não está ele preenche **no próprio programa**.
 5. Dados reais de alunos **nunca** vão para o GitHub nem para páginas publicadas. Use o arquivo de exemplo inventado (ver "Testes").
 
-## Como o programa funciona (versão 2.1)
+## Como o programa funciona (versão 2.2)
 - **Configuração:** "Abrir arquivo de alunos" lê o `TXTALUNO_xxxxx.txt` da SEMED (ANSI, colunas separadas por `;`) e **substitui** o banco (`%APPDATA%\Declaracoes Escolares\alunos.json`). Lá também ficam os dados da escola, o gestor(a) e o secretário(a) (nome, cargo, matrícula), a numeração, PDF/Word, a pasta de saída e o logotipo.
 - **Tela principal:**
   1. **Pesquisar aluno:** campo + botão Pesquisar (ou Enter). As opções aparecem embaixo. Ao clicar num aluno, o nome vai para o campo e a lista some. Com um só resultado, ele é escolhido sozinho.
@@ -39,6 +39,7 @@ Programa do Windows (Python + tkinter) feito para o Jansey, do CMEI Argentina Ba
 
 ## Pendências / ideias
 - **Versão atual em uso: v2.1-build14** (04/11/2026). O Jansey instalou e aprovou ("deu certo"), nos dois PCs da escola: o dele (1920x1080) e o de tela menor (1366x768). Ela corrigiu os cortes que a v1.9 tinha no PC de tela menor.
+- **Versão 2.2 no `main`, sem instalador ainda** (ele pediu para não montar): o cursor da barra de pesquisa ficava escondido atrás da frase cinza. Agora a frase começa depois do cursor (`_x_dica`), o cursor é mais grosso e pisca (`insertontime/insertofftime`), e o campo recebe o foco ao abrir (`_focar_pesquisa`) e ao clicar na barra ou na lupa. Montar o instalador só quando ele pedir.
 - O release **v1.8-build12** foi montado sem querer, porque ele pediu para não montar logo depois. Ele pode apagá-lo em Releases.
 - Página de revisão com fotos e documentos (artifact): https://claude.ai/artifact/GeF7noaEdUPEtnX5biJv1k (mostra a 1.6; atualizar quando for revisar de novo).
 - `versao-navegador/` tem a primeira versão em HTML, que não é mais usada.
