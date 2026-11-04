@@ -38,7 +38,7 @@ Programa do Windows (Python + tkinter) feito para o Jansey, do CMEI Argentina Ba
 - Arquivo de exemplo inventado (mesmas 40 colunas): gerar de novo a partir do cabeçalho do TXTALUNO real, com nomes, CPFs e telefones inventados. **Não commitar.**
 
 ## Pendências / ideias
-- A v1.9-build13 ficou boa no PC dele, mas cortava no outro PC da escola (tela 1366x768). As versões 2.0 e 2.1 corrigem isso (rolagem, telas baixas, Arial maior, maximizado). Falta montar o instalador quando ele pedir e testar nos dois PCs.
+- **Versão atual em uso: v2.1-build14** (04/11/2026). O Jansey instalou e aprovou ("deu certo"), nos dois PCs da escola: o dele (1920x1080) e o de tela menor (1366x768). Ela corrigiu os cortes que a v1.9 tinha no PC de tela menor.
 - O release **v1.8-build12** foi montado sem querer, porque ele pediu para não montar logo depois. Ele pode apagá-lo em Releases.
 - Página de revisão com fotos e documentos (artifact): https://claude.ai/artifact/GeF7noaEdUPEtnX5biJv1k (mostra a 1.6; atualizar quando for revisar de novo).
 - `versao-navegador/` tem a primeira versão em HTML, que não é mais usada.
