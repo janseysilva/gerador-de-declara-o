@@ -39,15 +39,13 @@ DECLARAÇÕES ESCOLARES - como usar
    sobe sozinho. As declarações ficam em Documentos\Declarações Escolares\<ano>.
    O botão "Abrir pasta" mostra todas as declarações já geradas.
 
-   Frequência do Gier: clique em "Baixar do Gier" (na Configuração ou no
-   quadro 3, na declaração de Frequência). O Gier abre no navegador: entre com
-   seu usuário e senha, escolha a turma, marque "Todos" em MÊS, clique em
-   Imprimir e baixe o PDF. Repita para as outras turmas. Cada PDF que chegar na
-   pasta Downloads entra sozinho no programa: aparece um aviso verde no canto
-   da tela e a mensagem embaixo mostra quantos chegaram. Se nada acontecer,
-   confira se o PDF foi salvo na pasta mostrada no aviso. O que o programa viu
-   fica anotado em %APPDATA%\Declaracoes Escolares\vigia.log. O programa para de esperar sozinho depois de 30 minutos sem PDF
-   novo, ou no botão "Parar de esperar". Se já tiver o PDF, use "Abrir PDF...".
+   Frequência do Gier: clique em "Atualizar frequência do Gier" (na
+   Configuração ou no quadro 3, na declaração de Frequência). Abre uma janela
+   do Chrome (ou do Edge) no Gier: entre com o seu usuário e senha. Pronto: o
+   programa busca sozinho todas as turmas e todos os meses e fecha a janela.
+   Uma janelinha no canto mostra o andamento (botão Cancelar). O programa não
+   vê nem guarda a senha. Se já tiver um PDF "Acompanhamento Diário", use
+   "Abrir PDF...".
    Depois disso, o quadro "Aluno" mostra a frequência e, na
    declaração de Frequência, a % sai preenchida sozinha. Em "Período", escolha
    "Todos os meses" ou um mês só. Se digitar outra %, o texto diz "até a
@@ -59,4 +57,4 @@ DECLARAÇÕES ESCOLARES - como usar
    clique em "Corrigir" (vale só para aquela declaração).
 
 Os dados ficam em %APPDATA%\Declaracoes Escolares (config.json, alunos.json,
-frequencia.json, historico.json). Nada é enviado para a internet.
+frequencia.json, historico.json; gier.log anota cada busca no Gier). Nada é enviado para a internet.

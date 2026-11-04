@@ -2,5 +2,6 @@ reportlab
 python-docx
 pdfplumber
 pypdfium2
+websocket-client
 pillow
 pyinstaller

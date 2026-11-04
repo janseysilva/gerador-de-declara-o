@@ -10,10 +10,10 @@ from reportlab.lib.pagesizes import A4, landscape
 from reportlab.pdfgen import canvas
 
 NOMES = ["ANA BEATRIZ SOUZA LIMA", "ANA CLARA MENDES", "ARTHUR MIGUEL COSTA",
-         "BERNARDO ALVES PEREIRA", "CECILIA RAMOS DUARTE", "DAVI LUCCA FERREIRA"]
+         "HEITOR SANTOS VIANA", "LAURA MARIA CAMPOS", "THEO HENRIQUE CRUZ"]
 
 
-def gerar(caminho):
+def gerar(caminho, turma="PE II -TURMA-E", nomes=NOMES):
     random.seed(3)
     c = canvas.Canvas(caminho, pagesize=landscape(A4))
     for mes, dias in (("Agosto", 20), ("Setembro", 19), ("Outubro", 9)):
@@ -26,10 +26,10 @@ def gerar(caminho):
         linha("Secretaria Municipal de Educação - Semed")
         linha("CMEI EXEMPLO - INEP: 00000000")
         linha("Acompanhamento Diário - Mês: " + mes, 11)
-        linha("Escola: CMEI EXEMPLO Ano Letivo: 2026 Turma: PE II -TURMA-E Componente Curricular: "
+        linha("Escola: CMEI EXEMPLO Ano Letivo: 2026 Turma: " + turma + " Componente Curricular: "
               "AULA DIA Professor: PROFESSORA EXEMPLO")
         linha("Nº Estudante Sit. Entr. Saída 01 02 03 Total Total")
-        for i, nome in enumerate(NOMES, 1):
+        for i, nome in enumerate(nomes, 1):
             f = random.choice([0, 1, 2, 3])
             simb = ["F"] * f + ["•"] * (dias - f)
             random.shuffle(simb)

@@ -26,7 +26,6 @@ import shutil
 import subprocess
 import time
 import unicodedata
-import webbrowser
 from datetime import datetime
 from xml.sax.saxutils import escape as xml_escape
 
@@ -34,7 +33,7 @@ import tkinter as tk
 import tkinter.font as tkfont
 from tkinter import ttk, filedialog, messagebox
 
-VERSAO_PROGRAMA = "2.4"
+VERSAO_PROGRAMA = "2.5"
 NOME_PROGRAMA = "Declarações Escolares"
 
 
@@ -69,8 +68,6 @@ ARQ_ALUNOS = "alunos.json"
 ARQ_HISTORICO = "historico.json"
 ARQ_LOGO = "logotipo.png"
 ARQ_FREQ = "frequencia.json"
-GIER_URL = "https://app-manaus-mvc-prd-frontend-001.azurewebsites.net/Relatorio/RelatorioFiltro/348"
-VIGIA_MINUTOS = 30          # a vigia da pasta Downloads para sozinha depois disso sem PDF novo
 
 
 def pasta_downloads():
@@ -2031,7 +2028,7 @@ class Aplicacao(tk.Tk):
         campo(linha, "Frequência %", e["freq"], largura=10).pack(side="left", padx=(8, 0))
         self.aviso_freq = rotulo(f, "", fraco=True, tam=9, wraplength=440, justify="left")
         self.aviso_freq.pack(anchor="w", pady=(4, 0))
-        Botao(f, "Baixar do Gier", self.baixar_do_gier, estilo="tracejado",
+        Botao(f, "Atualizar frequência do Gier", self.atualizar_do_gier, estilo="tracejado",
               fonte=(FONTE, 9, "bold"), pad_x=14, pad_y=6).pack(anchor="w", pady=(6, 0))
         e["freq_periodo"].trace_add("write", lambda *_: self._ao_mudar_periodo())
         self.extras["frequencia"] = f
@@ -2297,8 +2294,8 @@ class Aplicacao(tk.Tk):
             self.ext["freq_periodo"].set("")
             self.ext["freq"].set("")
             self.aviso_freq.configure(text="Sem frequência do Gier para este aluno. Clique em "
-                                           "\"Baixar do Gier\" ou digite a %." if self.freq.get("meses") else
-                                      "Para preencher sozinho, clique em \"Baixar do Gier\". "
+                                           "\"Atualizar frequência do Gier\" ou digite a %." if self.freq.get("meses") else
+                                      "Para preencher sozinho, clique em \"Atualizar frequência do Gier\". "
                                       "Ou digite a %.")
 
     def _ao_mudar_periodo(self):
@@ -2849,37 +2846,7 @@ class Aplicacao(tk.Tk):
     def _abrir_configuracao(self):
         JanelaConfiguracao(self)
 
-    # ----- Frequência: "Baixar do Gier" + vigia da pasta Downloads -----
-    def baixar_do_gier(self, pai=None):
-        pai = pai or self
-        pasta = pasta_downloads()
-        if not getattr(self, "_vigia", None):
-            try:
-                import frequencia_gier as fg
-                import pypdfium2  # noqa: F401  (se faltar no .exe, avisa já)
-            except Exception as erro:
-                messagebox.showerror(NOME_PROGRAMA, "O leitor de PDF não abriu neste computador:\n\n{}".format(erro),
-                                     parent=pai)
-                return
-            messagebox.showinfo(NOME_PROGRAMA,
-                "O Gier vai abrir no navegador.\n\n"
-                "1. Entre com o seu usuário e senha.\n"
-                "2. Escolha a turma e, em MÊS, marque \"Todos\" (ou os meses que quiser).\n"
-                "3. Clique em Imprimir e baixe o PDF.\n"
-                "4. Repita para as outras turmas.\n\n"
-                "Cada PDF que chegar na pasta abaixo entra sozinho no programa, e aparece "
-                "um aviso verde no canto da tela.\n\n{}".format(pasta), parent=pai)
-            self._registrar_vigia("começou a vigiar {}".format(pasta))
-            self._vigia = {"pasta": pasta, "inicio": time.time() - 15 * 60, "ultimo": time.time(),
-                           "pendentes": {}, "feitos": {}, "recebidos": 0, "meses": set(),
-                           "turmas": set(), "erros": 0}
-            self.after(1500, self._vigiar_downloads)
-        try:
-            webbrowser.open(GIER_URL)
-        except Exception:
-            pass
-        self._avisar_vigia()
-
+    # ----- Frequência: "Atualizar frequência do Gier" (busca sozinha, depois do login) -----
     def atualizar_frequencia_tela(self):
         """Frequência nova: refaz só a linha do quadro 2 e o % (sem apagar o que já foi digitado)."""
         if self.aluno:
@@ -2887,129 +2854,21 @@ class Aplicacao(tk.Tk):
             self._mostrar_aluno()
             self._reajustar()
 
-    def parar_vigia_gier(self):
-        self._vigia = None
-        self._avisar_vigia()
-
-    def texto_vigia(self):
-        v = getattr(self, "_vigia", None)
-        if not v:
-            return ""
-        texto = "Esperando os PDFs do Gier em {}".format(v["pasta"])
-        if v["recebidos"]:
-            texto += "  {} PDF(s) recebido(s): {} turma(s), {}.".format(
-                v["recebidos"], len(v["turmas"]), ", ".join(sorted(v["meses"], key=_mes_chave)))
-        return texto
-
-    def _avisar_vigia(self):
-        texto = self.texto_vigia()
-        if texto:
-            self.var_status.set(texto)
-        elif self.alunos:
-            self.var_status.set("Escolha o tipo de declaração e clique em Gerar declaração.")
-        for funcao in list(getattr(self, "_ouvintes_vigia", [])):
-            try:
-                funcao()
-            except Exception:
-                self._ouvintes_vigia.remove(funcao)
-
-    def _registrar_vigia(self, texto):
-        """Anota o que a vigia viu em vigia.log (para descobrir o que deu errado)."""
+    def _registrar(self, texto):
+        """Anota em gier.log o que aconteceu (para descobrir o que deu errado)."""
         try:
-            with open(os.path.join(pasta_dados(), "vigia.log"), "a", encoding="utf-8") as f:
+            with open(os.path.join(pasta_dados(), "gier.log"), "a", encoding="utf-8") as f:
                 f.write("{}  {}\n".format(datetime.now().strftime("%d/%m/%Y %H:%M:%S"), texto))
         except Exception:
             pass
 
-    def _vigiar_downloads(self):
-        v = getattr(self, "_vigia", None)
-        if not v:
+    def atualizar_do_gier(self, pai=None):
+        if getattr(self, "_janela_gier", None) is not None and self._janela_gier.winfo_exists():
+            self._janela_gier.lift()
             return
-        if time.time() - v["ultimo"] > VIGIA_MINUTOS * 60:
-            self._registrar_vigia("parou: {} min sem PDF novo".format(VIGIA_MINUTOS))
-            self.parar_vigia_gier()
-            return
-        try:
-            self._procurar_pdfs_novos(v)
-        except Exception as erro:
-            import traceback
-            self._registrar_vigia("ERRO: " + traceback.format_exc())
-            self.var_status.set("Erro ao ler a pasta {}: {}".format(v["pasta"], erro))
-        finally:
-            if getattr(self, "_vigia", None) is v:
-                self.after(2000, self._vigiar_downloads)
+        JanelaGier(self, pai or self)
 
-    def _procurar_pdfs_novos(self, v):
-        try:
-            nomes = os.listdir(v["pasta"])
-        except OSError as erro:
-            self._registrar_vigia("não consegui abrir a pasta {}: {}".format(v["pasta"], erro))
-            return
-        prontos = []
-        for nome in nomes:
-            minusculo = nome.lower()
-            if minusculo.endswith((".crdownload", ".tmp", ".part", ".partial", ".download", ".ini")):
-                continue
-            caminho = os.path.join(v["pasta"], nome)
-            try:
-                st = os.stat(caminho)
-            except OSError:
-                continue
-            if not st.st_size or os.path.isdir(caminho):
-                continue
-            # no Windows st_ctime é a hora em que o arquivo foi criado (o download)
-            if max(st.st_mtime, st.st_ctime) < v["inicio"]:
-                continue
-            marca = (st.st_size, st.st_mtime)
-            if v["feitos"].get(caminho) == marca:
-                continue
-            # só lê quando o arquivo parou de crescer (download terminado)
-            if v["pendentes"].get(caminho) != marca:
-                v["pendentes"][caminho] = marca
-                continue
-            try:
-                with open(caminho, "rb") as f:
-                    eh_pdf = f.read(5) == b"%PDF-"
-            except OSError as erro:            # o navegador ainda está gravando: tenta de novo
-                self._registrar_vigia("{}: ainda ocupado ({})".format(nome, erro))
-                continue
-            v["feitos"][caminho] = marca
-            v["pendentes"].pop(caminho, None)
-            if eh_pdf:
-                prontos.append(caminho)
-        for caminho in prontos:
-            self._receber_pdf(v, caminho)
-
-    def _receber_pdf(self, v, caminho):
-        import frequencia_gier as fg
-        nome = os.path.basename(caminho)
-        if not fg.parece_acompanhamento(caminho):
-            self._registrar_vigia("{}: não é o Acompanhamento Diário".format(nome))
-            self.var_status.set("Chegou \"{}\", mas não é o relatório \"Acompanhamento Diário\" do Gier. "
-                                "Continuo esperando.".format(nome))
-            return
-        banco, resumo = importar_frequencia_pdfs([caminho])
-        if not resumo["arquivos"]:
-            self._registrar_vigia("{}: {}".format(nome, "; ".join(resumo["erros"])))
-            messagebox.showwarning(NOME_PROGRAMA, "Chegou o PDF do Gier \"{}\", mas não consegui ler a "
-                                   "frequência.\n\n{}".format(nome, "\n".join(resumo["erros"])), parent=self)
-            return
-        self.freq = banco
-        v["recebidos"] += 1
-        v["meses"] |= resumo["meses"]
-        v["turmas"] |= resumo["turmas"]
-        v["ultimo"] = time.time()
-        meses = sorted(resumo["meses"], key=_mes_chave)
-        periodo = meses[0] if len(meses) == 1 else "{} a {}".format(meses[0], meses[-1])
-        self._registrar_vigia("{}: OK, {} ({}), {} crianças".format(
-            nome, ", ".join(sorted(resumo["turmas"])), periodo, resumo["criancas"]))
-        self.atualizar_frequencia_tela()
-        self._avisar_vigia()
-        self._aviso_flutuante("✓  Frequência recebida do Gier",
-                              "{} · {} · {} crianças".format(", ".join(sorted(resumo["turmas"])), periodo,
-                                                            resumo["criancas"]))
-
-    def _aviso_flutuante(self, titulo, texto, segundos=8):
+    def _aviso_flutuante(self, titulo, texto, segundos=8, rodape="Pode baixar a próxima turma."):
         """Aviso verde no canto da tela, por cima do navegador, que some sozinho."""
         try:
             antigo = getattr(self, "_janela_aviso", None)
@@ -3025,8 +2884,9 @@ class Aplicacao(tk.Tk):
                      anchor="w").pack(anchor="w")
             tk.Label(caixa, text=texto, bg=COR_VERDE, fg="#FFFFFF", font=(FONTE, 9), anchor="w",
                      justify="left", wraplength=420).pack(anchor="w", pady=(2, 0))
-            tk.Label(caixa, text="Pode baixar a próxima turma.", bg=COR_VERDE, fg="#DDF5E6",
-                     font=(FONTE, 9), anchor="w").pack(anchor="w", pady=(2, 0))
+            if rodape:
+                tk.Label(caixa, text=rodape, bg=COR_VERDE, fg="#DDF5E6",
+                         font=(FONTE, 9), anchor="w").pack(anchor="w", pady=(2, 0))
             j.update_idletasks()
             x = j.winfo_screenwidth() - j.winfo_reqwidth() - 24
             y = j.winfo_screenheight() - j.winfo_reqheight() - 72
@@ -3056,6 +2916,150 @@ class Aplicacao(tk.Tk):
 
     def configuracao_salva(self):
         self._atualizar_relogio()
+
+
+class JanelaGier(tk.Toplevel):
+    """Andamento da busca no Gier: a pessoa só entra com usuário e senha na janela do navegador."""
+
+    def __init__(self, app, pai):
+        super().__init__(pai)
+        self.app = app
+        self.pai = pai
+        app._janela_gier = self
+        self.title("Atualizar frequência do Gier")
+        self.configure(bg=COR_FUNDO)
+        self.transient(pai)
+        self.resizable(False, False)
+        self.protocol("WM_DELETE_WINDOW", self._cancelar)
+        caixa = tk.Frame(self, bg=COR_CARTAO, highlightthickness=1, highlightbackground=COR_BORDA)
+        caixa.pack(fill="both", expand=True, padx=16, pady=16)
+        dentro = tk.Frame(caixa, bg=COR_CARTAO)
+        dentro.pack(fill="both", expand=True, padx=20, pady=18)
+        tk.Label(dentro, text="Atualizar frequência do Gier", bg=COR_CARTAO, fg=COR_AZUL_ESCURO,
+                 font=(FONTE, 13, "bold"), anchor="w").pack(anchor="w")
+        rotulo(dentro, "Vai abrir uma janela do navegador no Gier. Entre com o seu usuário e senha lá. "
+                       "Depois disso o programa busca sozinho todas as turmas e todos os meses. "
+                       "O programa não vê nem guarda a senha.",
+               fraco=True, tam=9, wraplength=440, justify="left").pack(anchor="w", pady=(6, 12))
+        self.var = tk.StringVar(value="Preparando...")
+        tk.Label(dentro, textvariable=self.var, bg=COR_LINHA, fg=COR_TEXTO, font=(FONTE, 10, "bold"),
+                 anchor="w", justify="left", wraplength=440, padx=12, pady=10, highlightthickness=1,
+                 highlightbackground=COR_BORDA).pack(fill="x")
+        self.botao = Botao(dentro, "Cancelar", self._cancelar, estilo="suave")
+        self.botao.pack(anchor="e", pady=(14, 0))
+        self.update_idletasks()
+        # no canto de baixo, à direita, sempre por cima: fica à vista sobre a janela do navegador
+        x = self.winfo_screenwidth() - self.winfo_reqwidth() - 24
+        y = self.winfo_screenheight() - self.winfo_reqheight() - 72
+        self.geometry("+{}+{}".format(max(x, 0), max(y, 0)))
+        self.attributes("-topmost", True)
+        self.grab_set()
+
+        import queue
+        import threading
+        self.fila = queue.Queue()
+        self._parar = False
+        self._terminou = False
+        threading.Thread(target=self._trabalhar, daemon=True).start()
+        self.after(200, self._olhar_fila)
+
+    def _trabalhar(self):
+        import gier_auto
+        pasta_pdfs = os.path.join(pasta_dados(), "gier_pdfs")
+        try:
+            for nome in os.listdir(pasta_pdfs):
+                if nome.lower().endswith(".pdf"):
+                    os.remove(os.path.join(pasta_pdfs, nome))
+        except OSError:
+            pass
+        try:
+            caminhos, problemas = gier_auto.buscar_frequencia(
+                os.path.join(pasta_dados(), "navegador_gier"), pasta_pdfs,
+                lambda texto: self.fila.put(("andamento", texto)), lambda: self._parar)
+            self.fila.put(("fim", (caminhos, problemas)))
+        except gier_auto.Cancelado as erro:
+            self.fila.put(("cancelado", str(erro)))
+        except Exception as erro:
+            import traceback
+            self.app._registrar("ERRO: " + traceback.format_exc())
+            self.fila.put(("erro", str(erro)))
+
+    def _olhar_fila(self):
+        import queue
+        try:
+            while True:
+                tipo, dado = self.fila.get_nowait()
+                if tipo == "andamento":
+                    self.app._registrar(dado)
+                    self.var.set(dado)
+                else:
+                    self._terminar(tipo, dado)
+                    return
+        except queue.Empty:
+            pass
+        if self.winfo_exists():
+            self.after(200, self._olhar_fila)
+
+    def _terminar(self, tipo, dado):
+        self._terminou = True
+        app = self.app
+        self._fechar()
+        if tipo == "cancelado":
+            app.var_status.set("Atualização da frequência cancelada.")
+            return
+        if tipo == "erro":
+            app._registrar("erro: " + dado)
+            messagebox.showerror(NOME_PROGRAMA, "Não consegui buscar a frequência no Gier.\n\n{}".format(dado),
+                                 parent=app)
+            return
+        caminhos, problemas = dado
+        for p in problemas:
+            app._registrar("problema: " + p)
+        if not caminhos:
+            messagebox.showerror(NOME_PROGRAMA, "O Gier não entregou nenhuma frequência.\n\n" +
+                                 "\n".join(problemas[:12]), parent=app)
+            return
+        banco, resumo = importar_frequencia_pdfs(caminhos)
+        app.freq = banco
+        app.atualizar_frequencia_tela()
+        if getattr(app, "_ao_atualizar_freq", None):
+            try:
+                app._ao_atualizar_freq()
+            except Exception:
+                app._ao_atualizar_freq = None
+        meses = sorted(resumo["meses"], key=_mes_chave)
+        periodo = (meses[0] if len(meses) == 1 else "{} a {}".format(meses[0], meses[-1])) if meses else ""
+        app._registrar("OK: {} turma(s), {}, {} crianças".format(len(resumo["turmas"]), periodo, resumo["criancas"]))
+        texto = "{} turma(s) · {} · {} crianças".format(len(resumo["turmas"]), periodo, resumo["criancas"])
+        app.var_status.set("Frequência do Gier atualizada: " + texto + ".")
+        aviso = problemas + resumo["erros"]
+        if aviso:
+            messagebox.showwarning(NOME_PROGRAMA, "Frequência atualizada: {}.\n\nNão deu para trazer:\n{}".format(
+                texto, "\n".join(aviso[:12])), parent=app)
+        else:
+            app._aviso_flutuante("✓  Frequência do Gier atualizada", texto, rodape="")
+
+    def _cancelar(self):
+        if self._terminou:
+            return
+        self._parar = True
+        self.var.set("Cancelando... (pode fechar a janela do navegador)")
+        self.botao.definir_ativo(False)
+
+    def _fechar(self):
+        try:
+            self.grab_release()
+        except Exception:
+            pass
+        self.app._janela_gier = None
+        if self.winfo_exists():
+            self.destroy()
+        if self.pai is not self.app:          # a Configuração volta a ser a janela da frente
+            try:
+                if self.pai.winfo_exists():
+                    self.pai.grab_set()
+            except Exception:
+                pass
 
 
 class JanelaConfiguracao(tk.Toplevel):
@@ -3107,7 +3111,7 @@ class JanelaConfiguracao(tk.Toplevel):
                                     highlightbackground=COR_BORDA, padx=10, pady=8)
         self.linha_banco.pack(fill="x", pady=(8, 8))
         Botao(c, "Abrir arquivo de alunos...", self._importar, estilo="tracejado").pack(anchor="w")
-        rotulo(c, "Frequência: PDF \"Acompanhamento Diário\" do Gier (um ou vários meses e turmas).",
+        rotulo(c, "Frequência das turmas, buscada no Gier (todos os meses).",
                fraco=True, tam=9, wraplength=360, justify="left").pack(anchor="w", pady=(12, 0))
         self.linha_freq = tk.Label(c, text="", bg=COR_LINHA, fg=COR_TEXTO, font=(FONTE, 9, "bold"),
                                    anchor="w", justify="left", highlightthickness=1,
@@ -3115,15 +3119,9 @@ class JanelaConfiguracao(tk.Toplevel):
         self.linha_freq.pack(fill="x", pady=(6, 8))
         botoes = tk.Frame(c, bg=COR_CARTAO)
         botoes.pack(anchor="w")
-        Botao(botoes, "Baixar do Gier", lambda: self.app.baixar_do_gier(self), estilo="azul").pack(side="left")
+        Botao(botoes, "Atualizar do Gier", lambda: self.app.atualizar_do_gier(self), estilo="azul").pack(side="left")
         Botao(botoes, "Abrir PDF...", self._importar_freq, estilo="tracejado").pack(side="left", padx=(8, 0))
-        self.quadro_vigia = tk.Frame(c, bg=COR_CARTAO)
-        self.linha_vigia = rotulo(self.quadro_vigia, "", fraco=True, tam=9, wraplength=360, justify="left")
-        self.linha_vigia.pack(anchor="w")
-        Botao(self.quadro_vigia, "Parar de esperar", self.app.parar_vigia_gier, estilo="suave",
-              fonte=(FONTE, 9, "bold"), pad_x=12, pad_y=5).pack(anchor="w", pady=(4, 0))
-        self.app._ouvintes_vigia = [self._ao_mudar_vigia]
-        self._ao_mudar_vigia()
+        self.app._ao_atualizar_freq = self._mostrar_banco
         self._mostrar_banco()
 
         # 3 - Declarações
@@ -3196,22 +3194,16 @@ class JanelaConfiguracao(tk.Toplevel):
         meses = sorted((app.freq or {}).get("meses", {}).keys(), key=_mes_chave)
         if meses:
             criancas = len({c for m in meses for c in app.freq["meses"][m]})
-            self.linha_freq.configure(text="{}: {} ({} crianças)".format(
-                app.freq.get("ano", ""), ", ".join(meses), criancas))
+            quando = ""
+            try:
+                quando = "\nAtualizada em " + datetime.fromisoformat(app.freq["atualizado_em"]).strftime(
+                    "%d/%m/%Y às %H:%M")
+            except Exception:
+                pass
+            self.linha_freq.configure(text="{}: {} ({} crianças){}".format(
+                app.freq.get("ano", ""), ", ".join(meses), criancas, quando))
         else:
             self.linha_freq.configure(text="Nenhuma frequência aberta ainda.")
-
-    def _ao_mudar_vigia(self):
-        if not self.winfo_exists():
-            raise tk.TclError("janela fechada")
-        texto = self.app.texto_vigia()
-        self.linha_vigia.configure(text=texto)
-        if texto and not self.quadro_vigia.winfo_manager():
-            self.quadro_vigia.pack(anchor="w", fill="x", pady=(8, 0))
-        elif not texto and self.quadro_vigia.winfo_manager():
-            self.quadro_vigia.pack_forget()
-        self._mostrar_banco()
-        self.area.ajustar()
 
     def _importar_freq(self):
         caminhos = filedialog.askopenfilenames(
@@ -3319,9 +3311,31 @@ def testar_pdf_linha_de_comando(caminho, saida):
         json.dump(res, f, ensure_ascii=False)
 
 
+def testar_gier_linha_de_comando(saida):
+    """DeclaracoesEscolares.exe --testar-gier RESULTADO.json (usa GIER_BASE; para o teste no GitHub)."""
+    import tempfile
+    import gier_auto
+    res = {"versao": VERSAO_PROGRAMA, "navegador": gier_auto.achar_navegador()}
+    try:
+        pasta = tempfile.mkdtemp()
+        caminhos, problemas = gier_auto.buscar_frequencia(os.path.join(pasta, "perfil"), os.path.join(pasta, "pdfs"),
+                                                          lambda t: None, lambda: False, minutos_login=2)
+        res["pdfs"] = len(caminhos)
+        res["problemas"] = problemas
+        import frequencia_gier as fg
+        res["criancas"] = sum(len(fg.extrair_dados_pdf(c)[0]) for c in caminhos)
+    except Exception as erro:
+        res["erro"] = repr(erro)
+    with open(saida, "w", encoding="utf-8") as f:
+        json.dump(res, f, ensure_ascii=False)
+
+
 def main():
     if len(sys.argv) >= 4 and sys.argv[1] == "--testar-pdf":
         testar_pdf_linha_de_comando(sys.argv[2], sys.argv[3])
+        return
+    if len(sys.argv) >= 3 and sys.argv[1] == "--testar-gier":
+        testar_gier_linha_de_comando(sys.argv[2])
         return
     app = Aplicacao()
     if not app.alunos:

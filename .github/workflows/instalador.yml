@@ -47,6 +47,21 @@ jobs:
             exit 1
           }
 
+      - name: Testar o .exe buscando no Gier de teste (Chrome, nomes inventados)
+        run: |
+          $srv = Start-Process python -ArgumentList "testes/gier_falso.py", "8765" -PassThru -WindowStyle Hidden
+          Start-Sleep -Seconds 3
+          $env:GIER_BASE = "http://127.0.0.1:8765"
+          $env:GIER_NAVEGADOR_EXTRA = "--headless=new"
+          Start-Process -FilePath "dist\DeclaracoesEscolares.exe" -ArgumentList "--testar-gier", "`"$PWD\gier.json`"" -Wait
+          Stop-Process -Id $srv.Id -ErrorAction SilentlyContinue
+          Get-Content gier.json
+          $r = Get-Content gier.json -Raw | ConvertFrom-Json
+          if ($r.pdfs -ne 2 -or $r.criancas -ne 18) {
+            Write-Error "O .exe não conseguiu buscar a frequência no Gier de teste"
+            exit 1
+          }
+
       - name: Gerar o instalador (Inno Setup)
         run: |
           $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
