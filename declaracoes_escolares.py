@@ -33,7 +33,7 @@ import tkinter as tk
 import tkinter.font as tkfont
 from tkinter import ttk, filedialog, messagebox
 
-VERSAO_PROGRAMA = "2.7"
+VERSAO_PROGRAMA = "2.8"
 NOME_PROGRAMA = "Declarações Escolares"
 
 
@@ -581,6 +581,12 @@ def somar_frequencia(regs):
         return None
     faltas = sum(r["faltas"] + r.get("fj", 0) for _m, r in regs if r.get("dias"))
     return round(max(dias - faltas, 0) / dias * 100, 1), faltas, dias
+
+
+def _nome_periodo(regs):
+    """'Abril' para um mês; 'Abril a Novembro' para vários."""
+    meses = [m for m, _r in regs]
+    return meses[0] if len(meses) == 1 else "{} a {}".format(meses[0], meses[-1])
 
 
 def pct_br(valor):
@@ -2037,6 +2043,7 @@ class Aplicacao(tk.Tk):
         Botao(f, "Atualizar frequência do Gier", self.atualizar_do_gier, estilo="tracejado",
               fonte=(FONTE, 9, "bold"), pad_x=14, pad_y=6).pack(anchor="w", pady=(6, 0))
         e["freq_periodo"].trace_add("write", lambda *_: self._ao_mudar_periodo())
+        e["freq"].trace_add("write", lambda *_: self._mostrar_previa_freq())
         self.extras["frequencia"] = f
 
         f = tk.Frame(self.area_extras, bg=COR_CARTAO)
@@ -2314,12 +2321,43 @@ class Aplicacao(tk.Tk):
         soma = somar_frequencia(regs)
         if soma:
             pct, faltas, dias = soma
+            self._aviso_gier = "Do Gier ({}): {} dia(s) letivo(s), {} falta(s).".format(
+                _nome_periodo(regs), dias, faltas)
             self._freq_calculada = pct_br(pct)
             self.ext["freq"].set(self._freq_calculada)
-            self.aviso_freq.configure(text="Do Gier: {} dia(s) letivo(s), {} falta(s).".format(dias, faltas))
         else:
+            self._aviso_gier = "O Gier não tem dias letivos para esse período."
             self.ext["freq"].set("")
-            self.aviso_freq.configure(text="O Gier não tem dias letivos para esse período.")
+        self._mostrar_previa_freq()
+        self._atualizar_linha_freq()
+
+    def _mostrar_previa_freq(self):
+        """Embaixo do período: os números do Gier e como a frase vai sair na declaração."""
+        if not getattr(self, "freq_aluno", None) or not getattr(self, "_aviso_gier", ""):
+            return
+        e = self._extras_atuais()
+        texto = self._aviso_gier
+        if e.get("freq"):
+            texto += "\nNa declaração: frequência de {}% {}.".format(
+                e["freq"].replace("%", "").strip(), e.get("freq_mes") or "até a presente data")
+        self.aviso_freq.configure(text=texto)
+
+    def _texto_linha_freq(self, regs):
+        """A linha 'Frequência' do quadro 2, do período escolhido no quadro 3."""
+        soma = somar_frequencia(regs)
+        if not soma:
+            return ""
+        return "{}% de presença · {} falta(s) · {} dia(s) ({})".format(pct_br(soma[0]), soma[1], soma[2], _nome_periodo(regs))
+
+    def _regs_do_periodo(self, regs):
+        escolha = self.ext["freq_periodo"].get()
+        return [(m, r) for m, r in regs if m == escolha] or regs
+
+    def _atualizar_linha_freq(self):
+        rotulo_freq = getattr(self, "_rotulo_freq", None)
+        if rotulo_freq is not None and rotulo_freq.winfo_exists():
+            texto = self._texto_linha_freq(self._regs_do_periodo(self.freq_aluno))
+            rotulo_freq.configure(text=texto or "não consta no arquivo", fg=COR_TEXTO if texto else "#A0A8B8")
 
     def _mostrar_extras(self):
         for chave, quadro in self.extras.items():
@@ -2434,9 +2472,8 @@ class Aplicacao(tk.Tk):
         self._mostrar_area_result(True)
         self.quadro_lista.place(x=0, y=0, relwidth=1, relheight=1)
         self._desenhar_linhas(self.todos_achados)
-        if len(achados) == 1:
-            self._clicar_resultado(0)
-            self.var_status.set("Aluno encontrado e escolhido. Escolha o tipo e clique em Gerar declaração.")
+        if len(achados) == 1:               # mesmo com um só, a pessoa confere o nome e clica (pedido do Jansey)
+            self.var_status.set("1 aluno encontrado. Clique no nome para escolher.")
         else:
             extra = " (mostrando os 100 primeiros)" if len(achados) > 100 else ""
             self.var_status.set("{} alunos encontrados{}. Clique no aluno certo.".format(len(achados), extra))
@@ -2616,19 +2653,17 @@ class Aplicacao(tk.Tk):
         itens.append(("Telefone", "   ·   ".join(v for v in (a.get("telefone"), a.get("telefone2")) if v)))
         if self.freq.get("meses"):
             regs = frequencia_do_aluno(self.freq, a)
-            soma = somar_frequencia(regs)
-            if soma:
-                meses = [m for m, _r in regs]
-                periodo = meses[0] if len(meses) == 1 else "{} a {}".format(meses[0][:3], meses[-1][:3])
-                itens.append(("Frequência", "{}% de presença · {} falta(s) ({})".format(pct_br(soma[0]), soma[1], periodo)))
-            else:
-                itens.append(("Frequência", ""))
+            itens.append(("Frequência", self._texto_linha_freq(self._regs_do_periodo(regs)) if regs else ""))
+        self._rotulo_freq = None
         for i, (titulo, valor) in enumerate(itens):
             tk.Label(self.info_aluno, text=titulo, bg=COR_CARTAO, fg=COR_TEXTO_FRACO, font=(FONTE, 9, "bold"),
                      anchor="nw").grid(row=i, column=0, sticky="nw", padx=(0, 10), pady=1)
-            tk.Label(self.info_aluno, text=valor or "não consta no arquivo", bg=COR_CARTAO,
-                     fg=COR_TEXTO if valor else "#A0A8B8", font=(FONTE, 9), anchor="nw", justify="left",
-                     wraplength=self._quebra_info).grid(row=i, column=1, sticky="nw", pady=1)
+            rotulo_valor = tk.Label(self.info_aluno, text=valor or "não consta no arquivo", bg=COR_CARTAO,
+                                    fg=COR_TEXTO if valor else "#A0A8B8", font=(FONTE, 9), anchor="nw", justify="left",
+                                    wraplength=self._quebra_info)
+            rotulo_valor.grid(row=i, column=1, sticky="nw", pady=1)
+            if titulo == "Frequência":
+                self._rotulo_freq = rotulo_valor
         faltam = [n for n, k in (("sexo", "sexo"), ("fase/ano", "serie"), ("nascimento", "nasc")) if not a.get(k)]
         self.alerta_aluno.configure(text="Faltou na lista: " + ", ".join(faltam) + ". Use “Corrigir”." if faltam else "")
         self.botao_corrigir.pack(side="right")
