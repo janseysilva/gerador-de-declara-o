@@ -4,7 +4,7 @@ cd /d "%~dp0"
 set PY=python
 where py >nul 2>nul && set PY=py
 echo Preparando (so demora na primeira vez)...
-%PY% -m pip install --quiet --disable-pip-version-check reportlab python-docx pillow
+%PY% -m pip install --quiet --disable-pip-version-check reportlab python-docx pillow pdfplumber pypdfium2
 if errorlevel 1 (
   echo.
   echo Nao consegui instalar os componentes. Confira se o Python esta instalado.

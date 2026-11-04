@@ -32,7 +32,7 @@ import tkinter as tk
 import tkinter.font as tkfont
 from tkinter import ttk, filedialog, messagebox
 
-VERSAO_PROGRAMA = "2.2"
+VERSAO_PROGRAMA = "2.3"
 NOME_PROGRAMA = "Declarações Escolares"
 
 
@@ -66,6 +66,7 @@ ARQ_CONFIG = "config.json"
 ARQ_ALUNOS = "alunos.json"
 ARQ_HISTORICO = "historico.json"
 ARQ_LOGO = "logotipo.png"
+ARQ_FREQ = "frequencia.json"
 
 
 def ler_json(nome, padrao):
@@ -466,6 +467,95 @@ def _escolher_colunas(corpo, titulos):
     return escolha
 
 
+# ---------------------------------------------------------------------------
+# Frequência (PDF "Acompanhamento Diário" do Gier)
+# ---------------------------------------------------------------------------
+
+MESES_NUMERO = {sem_acento(m): i + 1 for i, m in enumerate(MESES)}
+
+
+def _mes_chave(mes):
+    return MESES_NUMERO.get(sem_acento(mes), 99)
+
+
+def importar_frequencia_pdfs(caminhos):
+    """
+    Lê um ou mais PDFs "Acompanhamento Diário" do Gier e guarda a frequência de
+    cada criança por mês em frequencia.json. Um mês já guardado é atualizado.
+    """
+    import frequencia_gier as fg
+    banco = ler_json(ARQ_FREQ, {})
+    if not isinstance(banco, dict):
+        banco = {}
+    meses = banco.setdefault("meses", {})
+    resumo = {"arquivos": 0, "criancas": 0, "meses": set(), "turmas": set(), "erros": []}
+    for caminho in caminhos:
+        nome_arq = os.path.basename(caminho)
+        try:
+            alunos, info = fg.extrair_dados_pdf(caminho)
+        except Exception as erro:
+            resumo["erros"].append("{}: não consegui ler ({})".format(nome_arq, erro))
+            continue
+        if not alunos:
+            resumo["erros"].append("{}: não achei a frequência. É o relatório \"Acompanhamento Diário\" "
+                                   "do Gier?".format(nome_arq))
+            continue
+        resumo["arquivos"] += 1
+        for al in alunos:
+            mes = (al.get("mes") or info.get("mes") or "?").capitalize()
+            _p, pct, obs = fg.calcular_presenca(al)
+            chave = fg.normalizar(al["nome"])
+            reg = {"nome": al["nome"], "turma": al["turma"], "situacao": al["situacao"],
+                   "dias": al["dias_letivos"], "faltas": al["faltas"], "fj": al["faltas_justificadas"],
+                   "pct": pct, "obs": obs}
+            d = meses.setdefault(mes, {})
+            # a mesma criança pode aparecer 2 vezes no mês (ex.: TR e depois MA): fica a de mais dias
+            if chave not in d or reg["dias"] >= d[chave]["dias"]:
+                d[chave] = reg
+            resumo["criancas"] += 1
+            resumo["meses"].add(mes)
+            resumo["turmas"].add(al["turma"])
+        if info.get("ano"):
+            banco["ano"] = info["ano"]
+    banco["atualizado_em"] = datetime.now().isoformat(timespec="seconds")
+    gravar_json(ARQ_FREQ, banco)
+    return banco, resumo
+
+
+def frequencia_do_aluno(banco, aluno):
+    """[(mês, registro)] da criança, em ordem de mês. Casa pelo nome (igual ou bem parecido)."""
+    import difflib
+    import frequencia_gier as fg
+    if not banco or not banco.get("meses"):
+        return []
+    chaves = [fg.normalizar(aluno.get("nome", "")), fg.normalizar(aluno.get("social", ""))]
+    achados = []
+    for mes, d in banco["meses"].items():
+        reg = next((d[c] for c in chaves if c and c in d), None)
+        if reg is None and chaves[0]:
+            parecido = difflib.get_close_matches(chaves[0], list(d.keys()), n=1, cutoff=0.87)
+            reg = d[parecido[0]] if parecido else None
+        if reg is not None:
+            achados.append((mes, reg))
+    return sorted(achados, key=lambda x: _mes_chave(x[0]))
+
+
+def somar_frequencia(regs):
+    """Soma os meses: (percentual de presença, faltas, dias letivos) ou None."""
+    dias = sum(r["dias"] for _m, r in regs if r.get("dias"))
+    if not dias:
+        return None
+    faltas = sum(r["faltas"] + r.get("fj", 0) for _m, r in regs if r.get("dias"))
+    return round(max(dias - faltas, 0) / dias * 100, 1), faltas, dias
+
+
+def pct_br(valor):
+    if valor is None:
+        return ""
+    texto = "{:.1f}".format(valor).replace(".", ",")
+    return texto[:-2] if texto.endswith(",0") else texto
+
+
 def ordem_serie(serie):
     m = re.match(r"\s*(\d+)", serie or "")
     return (int(m.group(1)) if m else 99, serie or "")
@@ -586,7 +676,10 @@ def paragrafos(tipo, a, extras, ano_letivo):
         f = ", encontra-se regularmente matriculad{} {}, frequentando as aulas regularmente".format(o, matric)
         freq = str(x.get("freq") or "").replace("%", "").replace(".", ",").strip()
         if freq:
-            f += ", com frequência de {}% até a presente data".format(freq)
+            if x.get("freq_mes"):
+                f += ", com frequência de {}% {}".format(freq, x["freq_mes"])
+            else:
+                f += ", com frequência de {}% até a presente data".format(freq)
         p.append([ini] + q + [(f + ".", False)])
 
     elif tipo == "transferencia":
@@ -1672,7 +1765,8 @@ class Aplicacao(tk.Tk):
         self.var_status = tk.StringVar()
         self.ext = {k: tk.StringVar() for k in (
             "freq", "situacao", "destino", "prazo", "resultado", "proxima", "validade",
-            "resp_nome", "resp_cpf", "hora_ini", "hora_fim", "motivo", "parentesco")}
+            "resp_nome", "resp_cpf", "hora_ini", "hora_fim", "motivo", "parentesco", "freq_periodo")}
+        self.freq = ler_json(ARQ_FREQ, {})
         self.ext["parentesco"].set("Mãe")
         self.var_assina = tk.StringVar(value=self.cfg.get("assina") or "gestor")
         self.ext["prazo"].set("30")
@@ -1898,7 +1992,15 @@ class Aplicacao(tk.Tk):
         self.extras["matricula"] = f
 
         f = tk.Frame(self.area_extras, bg=COR_CARTAO)
-        campo(f, "Frequência % (opcional)", e["freq"], largura=12).pack(anchor="w")
+        linha = tk.Frame(f, bg=COR_CARTAO)
+        linha.pack(fill="x")
+        q = campo(linha, "Período (frequência do Gier)", e["freq_periodo"], opcoes=[], editavel=False)
+        q.pack(side="left", fill="x", expand=True)
+        self.combo_periodo = q.entrada
+        campo(linha, "Frequência %", e["freq"], largura=10).pack(side="left", padx=(8, 0))
+        self.aviso_freq = rotulo(f, "", fraco=True, tam=9, wraplength=440, justify="left")
+        self.aviso_freq.pack(anchor="w", pady=(4, 0))
+        e["freq_periodo"].trace_add("write", lambda *_: self._ao_mudar_periodo())
         self.extras["frequencia"] = f
 
         f = tk.Frame(self.area_extras, bg=COR_CARTAO)
@@ -2146,6 +2248,43 @@ class Aplicacao(tk.Tk):
         except (tk.TclError, AttributeError):
             pass
 
+    def _preparar_frequencia(self, a):
+        """Ao escolher o aluno: períodos com frequência do Gier e o % já calculado."""
+        self.freq_aluno = frequencia_do_aluno(self.freq, a)
+        if self.freq_aluno:
+            meses = [m for m, _r in self.freq_aluno]
+            todos = "Todos os meses ({})".format(meses[0] if len(meses) == 1 else meses[0] + " a " + meses[-1])
+            self.combo_periodo.configure(values=[todos] + meses)
+            self._periodo_todos = todos
+            self.ext["freq_periodo"].set(todos)
+            self._ao_mudar_periodo()
+        else:
+            self.combo_periodo.configure(values=[])
+            self._periodo_todos = ""
+            self.ext["freq_periodo"].set("")
+            self.ext["freq"].set("")
+            self.aviso_freq.configure(text="Sem frequência do Gier para este aluno. Abra o PDF do Gier na "
+                                           "Configuração ou digite a %." if self.freq.get("meses") else
+                                      "Para preencher sozinho, abra o PDF \"Acompanhamento Diário\" do Gier "
+                                      "na Configuração. Ou digite a %.")
+
+    def _ao_mudar_periodo(self):
+        regs = getattr(self, "freq_aluno", [])
+        if not regs:
+            return
+        escolha = self.ext["freq_periodo"].get()
+        if escolha != getattr(self, "_periodo_todos", ""):
+            regs = [(m, r) for m, r in regs if m == escolha]
+        soma = somar_frequencia(regs)
+        if soma:
+            pct, faltas, dias = soma
+            self._freq_calculada = pct_br(pct)
+            self.ext["freq"].set(self._freq_calculada)
+            self.aviso_freq.configure(text="Do Gier: {} dia(s) letivo(s), {} falta(s).".format(dias, faltas))
+        else:
+            self.ext["freq"].set("")
+            self.aviso_freq.configure(text="O Gier não tem dias letivos para esse período.")
+
     def _mostrar_extras(self):
         for chave, quadro in self.extras.items():
             if chave == self.var_tipo.get():
@@ -2335,7 +2474,7 @@ class Aplicacao(tk.Tk):
         self._preparar_termos(self.aluno)
         self.ext["hora_fim"].set(agora.strftime("%H:%M"))
         self.ext["hora_ini"].set("{:02d}:{:02d}".format(max(agora.hour - 1, 0), agora.minute))
-        self.ext["freq"].set("")
+        self._preparar_frequencia(self.aluno)
         self.ext["destino"].set("")
         self._mostrar_aluno()
         self._reajustar()
@@ -2439,6 +2578,15 @@ class Aplicacao(tk.Tk):
             endereco += ("   ·   " if endereco else "") + "CEP " + a["cep"]
         itens.append(("Endereço", endereco))
         itens.append(("Telefone", "   ·   ".join(v for v in (a.get("telefone"), a.get("telefone2")) if v)))
+        if self.freq.get("meses"):
+            regs = frequencia_do_aluno(self.freq, a)
+            soma = somar_frequencia(regs)
+            if soma:
+                meses = [m for m, _r in regs]
+                periodo = meses[0] if len(meses) == 1 else "{} a {}".format(meses[0][:3], meses[-1][:3])
+                itens.append(("Frequência", "{}% de presença · {} falta(s) ({})".format(pct_br(soma[0]), soma[1], periodo)))
+            else:
+                itens.append(("Frequência", ""))
         for i, (titulo, valor) in enumerate(itens):
             tk.Label(self.info_aluno, text=titulo, bg=COR_CARTAO, fg=COR_TEXTO_FRACO, font=(FONTE, 9, "bold"),
                      anchor="nw").grid(row=i, column=0, sticky="nw", padx=(0, 10), pady=1)
@@ -2513,6 +2661,16 @@ class Aplicacao(tk.Tk):
                          "Reprovado(a)": "reprovado"}.get(e["situacao"], "")
         e["resultado"] = "conselho" if "Conselho" in e["resultado"] else "aprovado"
         e["parentesco"] = {"Mãe": "mae", "Pai": "pai"}.get(e["parentesco"], "responsavel")
+        periodo = e.get("freq_periodo", "")
+        meses = [m.lower() for m, _r in getattr(self, "freq_aluno", [])]
+        if periodo and periodo != getattr(self, "_periodo_todos", ""):
+            meses = [periodo.lower()]
+        if not periodo or not meses or e.get("freq", "") != getattr(self, "_freq_calculada", None):
+            e["freq_mes"] = ""                     # % digitada à mão: "até a presente data"
+        elif len(meses) == 1:
+            e["freq_mes"] = "no mês de " + meses[0]
+        else:
+            e["freq_mes"] = "no período de {} a {}".format(meses[0], meses[-1])
         return e
 
     def _gerar(self):
@@ -2710,7 +2868,7 @@ class JanelaConfiguracao(tk.Toplevel):
         self.area = AreaRolavel(self, COR_FUNDO)
         self.area.pack(fill="both", expand=True)
         corpo = tk.Frame(self.area.miolo, bg=COR_FUNDO)
-        corpo.pack(fill="both", expand=True, padx=22, pady=18)
+        corpo.pack(fill="both", expand=True, padx=22 if largura >= 1000 else 10, pady=18)
         corpo.columnconfigure(0, weight=1, uniform="c")
         corpo.columnconfigure(1, weight=1, uniform="c")
         corpo.rowconfigure(1, weight=1)
@@ -2727,6 +2885,13 @@ class JanelaConfiguracao(tk.Toplevel):
                                     highlightbackground=COR_BORDA, padx=10, pady=8)
         self.linha_banco.pack(fill="x", pady=(8, 8))
         Botao(c, "Abrir arquivo de alunos...", self._importar, estilo="tracejado").pack(anchor="w")
+        rotulo(c, "Frequência: PDF \"Acompanhamento Diário\" do Gier (um ou vários meses e turmas).",
+               fraco=True, tam=9, wraplength=360, justify="left").pack(anchor="w", pady=(12, 0))
+        self.linha_freq = tk.Label(c, text="", bg=COR_LINHA, fg=COR_TEXTO, font=(FONTE, 9, "bold"),
+                                   anchor="w", justify="left", highlightthickness=1,
+                                   highlightbackground=COR_BORDA, padx=10, pady=6, wraplength=360)
+        self.linha_freq.pack(fill="x", pady=(6, 8))
+        Botao(c, "Abrir frequência do Gier (PDF)...", self._importar_freq, estilo="tracejado").pack(anchor="w")
         self._mostrar_banco()
 
         # 3 - Declarações
@@ -2796,6 +2961,35 @@ class JanelaConfiguracao(tk.Toplevel):
         else:
             self.marca.configure(text="")
             self.linha_banco.configure(text="Nenhum arquivo aberto ainda.")
+        meses = sorted((app.freq or {}).get("meses", {}).keys(), key=_mes_chave)
+        if meses:
+            criancas = len({c for m in meses for c in app.freq["meses"][m]})
+            self.linha_freq.configure(text="{}: {} ({} crianças)".format(
+                app.freq.get("ano", ""), ", ".join(meses), criancas))
+        else:
+            self.linha_freq.configure(text="Nenhuma frequência aberta ainda.")
+
+    def _importar_freq(self):
+        caminhos = filedialog.askopenfilenames(
+            parent=self, title="Frequência do Gier (Acompanhamento Diário)",
+            filetypes=[("PDF", "*.pdf"), ("Todos os arquivos", "*.*")])
+        if not caminhos:
+            return
+        try:
+            banco, resumo = importar_frequencia_pdfs(caminhos)
+        except Exception as erro:
+            messagebox.showerror(NOME_PROGRAMA, "Não consegui ler a frequência.\n\n{}".format(erro), parent=self)
+            return
+        self.app.freq = banco
+        self._mostrar_banco()
+        if self.app.aluno:
+            self.app._escolher(self.app.aluno)
+        texto = "{} arquivo(s) lido(s): {}, {} turma(s).".format(
+            resumo["arquivos"], ", ".join(sorted(resumo["meses"], key=_mes_chave)) or "nenhum mês",
+            len(resumo["turmas"]))
+        if resumo["erros"]:
+            texto += "\n\n" + "\n".join(resumo["erros"])
+        (messagebox.showwarning if resumo["erros"] else messagebox.showinfo)(NOME_PROGRAMA, texto, parent=self)
 
     def _importar(self):
         caminho = filedialog.askopenfilename(

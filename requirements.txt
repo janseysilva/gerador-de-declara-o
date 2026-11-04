@@ -1,4 +1,6 @@
 reportlab
 python-docx
+pdfplumber
+pypdfium2
 pillow
 pyinstaller

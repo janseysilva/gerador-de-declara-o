@@ -6,6 +6,8 @@ O programa lê o arquivo de alunos exportado do sistema da SEMED (`TXTALUNO_xxxx
 
 Tipos: Matrícula, Frequência, Transferência, Conclusão e Comparecimento, além do Termo de Justificativa de Falta e do Termo de Ciência, Compromisso e Responsabilidade (CEMASP). A data vem do relógio do computador, e o número da declaração (Nº 001/2026) sobe sozinho.
 
+A frequência vem do PDF "Acompanhamento Diário" do Gier (Configuração → *Abrir frequência do Gier (PDF)...*). O leitor (`frequencia_gier.py`) foi copiado do Frequência Inteligente.
+
 ## Baixar o instalador
 Na aba **Releases** deste repositório, baixe `Instalador_DeclaracoesEscolares.exe` e dê dois cliques. O instalador é montado num Windows do GitHub só quando alguém pede (aba **Actions** → *Instalador Declarações Escolares* → **Run workflow**); a receita está em `.github/workflows/instalador.yml`.
 
@@ -14,6 +16,7 @@ Na aba **Releases** deste repositório, baixe `Instalador_DeclaracoesEscolares.e
 | Arquivo | Para que serve |
 |---|---|
 | `declaracoes_escolares.py` | O programa: leitura do TXT, textos, PDF/Word e a janela |
+| `frequencia_gier.py` | Leitura do PDF "Acompanhamento Diário" do Gier (copiada do Frequência Inteligente) |
 | `DeclaracoesEscolares.spec` | Receita do PyInstaller (gera o `.exe`) |
 | `instalador_declaracoes.iss` | Receita do Inno Setup (gera o instalador) |
 | `TESTAR.bat` | Abre o programa direto do código, para testar |

@@ -39,10 +39,18 @@ DECLARAÇÕES ESCOLARES - como usar
    sobe sozinho. As declarações ficam em Documentos\Declarações Escolares\<ano>.
    O botão "Abrir pasta" mostra todas as declarações já geradas.
 
+   Frequência do Gier: no Gier, gere o relatório "Acompanhamento Diário" e
+   baixe o PDF (um mês ou vários, uma turma ou várias). Na Configuração, clique
+   em "Abrir frequência do Gier (PDF)..." e escolha o(s) PDF(s); pode escolher
+   vários de uma vez. Depois disso, o quadro "Aluno" mostra a frequência e, na
+   declaração de Frequência, a % sai preenchida sozinha. Em "Período", escolha
+   "Todos os meses" ou um mês só. Se digitar outra %, o texto diz "até a
+   presente data". Um mês aberto de novo é atualizado.
+
 3. DADOS FALTANDO
    O quadro "Aluno" mostra mãe, pai, endereço e telefones conforme o arquivo.
    O que não vier no arquivo aparece como "não consta no arquivo". Se precisar,
    clique em "Corrigir" (vale só para aquela declaração).
 
 Os dados ficam em %APPDATA%\Declaracoes Escolares (config.json, alunos.json,
-historico.json). Nada é enviado para a internet.
+frequencia.json, historico.json). Nada é enviado para a internet.

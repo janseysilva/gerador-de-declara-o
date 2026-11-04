@@ -10,7 +10,7 @@ Programa do Windows (Python + tkinter) feito para o Jansey, do CMEI Argentina Ba
 4. Ele não preenche nada à mão: o que está no banco de dados sai sozinho, e o que não está ele preenche **no próprio programa**.
 5. Dados reais de alunos **nunca** vão para o GitHub nem para páginas publicadas. Use o arquivo de exemplo inventado (ver "Testes").
 
-## Como o programa funciona (versão 2.2)
+## Como o programa funciona (versão 2.3)
 - **Configuração:** "Abrir arquivo de alunos" lê o `TXTALUNO_xxxxx.txt` da SEMED (ANSI, colunas separadas por `;`) e **substitui** o banco (`%APPDATA%\Declaracoes Escolares\alunos.json`). Lá também ficam os dados da escola, o gestor(a) e o secretário(a) (nome, cargo, matrícula), a numeração, PDF/Word, a pasta de saída e o logotipo.
 - **Tela principal:**
   1. **Pesquisar aluno:** campo + botão Pesquisar (ou Enter). As opções aparecem embaixo. Ao clicar num aluno, o nome vai para o campo e a lista some. Com um só resultado, ele é escolhido sozinho.
@@ -22,6 +22,8 @@ Programa do Windows (Python + tkinter) feito para o Jansey, do CMEI Argentina Ba
 - **Comparecimento:** pílulas com os responsáveis do arquivo, e "Outra pessoa" para digitar. Entrada e saída no formato 00:00, com máscara.
 - **Justificativa de falta:** no quadro 3 se preenchem data e quantidade de faltas, Bolsa Família, motivo (com "Outro" e o campo "Qual?") e o responsável. O responsável é escolhido em pílulas Mãe/Pai/Responsável/Outro; "Outro" abre o campo Nome. O WhatsApp vem do arquivo.
 - **Termo de compromisso (CEMASP):** responsável em pílulas (como acima), CPF ao lado com máscara (vem do arquivo quando o escolhido é quem fez a matrícula; ao trocar de pessoa, é apagado), profissão e horário. Endereço, bairro, telefone, série, turma e turno saem do arquivo. "pai/mãe/responsável" é marcado conforme o nome.
+- **Frequência do Gier (2.3):** o Gier (site da SEMED, Relatório de Frequência Diária, filtro 348) exporta o PDF "Acompanhamento Diário - Mês: X" (Reporting Services), o mesmo que o Frequência Inteligente lê. `frequencia_gier.py` é cópia do leitor do FI (pypdfium2 rápido, pdfplumber de reserva). Configuração → "Abrir frequência do Gier (PDF)..." (vários PDFs de uma vez) grava `frequencia.json` (`meses → nome normalizado → dias/faltas/fj/pct`; um mês reaberto é atualizado). O aluno é casado pelo nome (igual ou difflib 0,87). Quadro 2 mostra "X% de presença · N falta(s) (Ago a Out)". Na declaração de Frequência: combobox "Período" (Todos os meses / cada mês) preenche a %; o texto diz "no mês de outubro" / "no período de agosto a outubro"; % digitada à mão volta a "até a presente data". Com o PDF real (PE II Turma A, outubro, 20 linhas): 18 casaram; 1 transferida (TR) não está no TXT e 1 tem sobrenome diferente no Gier e no TXTALUNO (o programa avisa e deixa digitar).
+- Busca automática no site do Gier (com login do Jansey): adiada; ele não conseguiu salvar a página de download (Ctrl+S), e o PDF resolve por enquanto.
 - O instalador (Inno Setup) fecha o programa aberto antes de atualizar (`taskkill` no `[Code]`).
 - **Fonte Arial, 20% maior** (`FONTE`, `AUMENTO_LETRA = 1.2`, aplicado no `tk scaling`), escolhida pelo Jansey a partir das imagens de revisão. O programa **abre maximizado** (`_maximizar`), e o texto do quadro 2 quebra conforme a largura (`_ajustar_quebras`).
 - **Telas baixas (altura < 900, ex.: 1366x768 do outro PC da escola):** faixa azul mais baixa (66 em vez de 92). O espaço das opções da pesquisa só aparece quando há resultado. A tela principal e a Configuração ficam dentro de `AreaRolavel`, que ganha barra de rolagem sozinha quando falta espaço (a rodinha do mouse rola). Quando o conteúdo muda de altura, `_reajustar()` acerta a barra na hora.
@@ -39,7 +41,8 @@ Programa do Windows (Python + tkinter) feito para o Jansey, do CMEI Argentina Ba
 
 ## Pendências / ideias
 - **Versão atual em uso: v2.1-build14** (04/11/2026). O Jansey instalou e aprovou ("deu certo"), nos dois PCs da escola: o dele (1920x1080) e o de tela menor (1366x768). Ela corrigiu os cortes que a v1.9 tinha no PC de tela menor.
-- **Versão 2.2 no `main`, sem instalador ainda** (ele pediu para não montar): o cursor da barra de pesquisa ficava escondido atrás da frase cinza. Agora a frase começa depois do cursor (`_x_dica`), o cursor é mais grosso e pisca (`insertontime/insertofftime`), e o campo recebe o foco ao abrir (`_focar_pesquisa`) e ao clicar na barra ou na lupa. Montar o instalador só quando ele pedir.
+- **Versão 2.3 no `main`, sem instalador ainda:** frequência do Gier (ver acima). Teste de todas as telas sem problemas (a Configuração em janela < 1000 de largura usa margem 10 em vez de 22, porque os itens novos fazem a barra de rolagem aparecer).
+- **Versão 2.2** (incluída na 2.3) (ele pediu para não montar): o cursor da barra de pesquisa ficava escondido atrás da frase cinza. Agora a frase começa depois do cursor (`_x_dica`), o cursor é mais grosso e pisca (`insertontime/insertofftime`), e o campo recebe o foco ao abrir (`_focar_pesquisa`) e ao clicar na barra ou na lupa. Montar o instalador só quando ele pedir.
 - O release **v1.8-build12** foi montado sem querer, porque ele pediu para não montar logo depois. Ele pode apagá-lo em Releases.
 - Página de revisão com fotos e documentos (artifact): https://claude.ai/artifact/GeF7noaEdUPEtnX5biJv1k (mostra a 1.6; atualizar quando for revisar de novo).
 - `versao-navegador/` tem a primeira versão em HTML, que não é mais usada.
