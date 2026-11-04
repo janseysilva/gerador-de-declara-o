@@ -283,49 +283,63 @@ JS_TURMAS = r"""(async () => {
   return {ano: ano, escola: escola, turmas: turmas};
 })()"""
 
-JS_PDF = r"""(async (args) => {
+# O Gier lista o componente como "EDUCAÇÃO INFANTIL", e o PDF sai com "AULA DIA" no cabeçalho.
+# "EDUCAÇÃO FÍSICA" vem primeiro na lista, mas volta sem dias letivos: é sempre ignorada (pedido do Jansey).
+JS_CANDIDATOS = r"""(async (args) => {
   const fixos = {AnoLetivo: args.ano, IdEscola: args.escola, IdModalidade: args.etapa, IdTurma: args.turma};
-  // tipo de frequência e componente: procura o "AULA DIA" (o mesmo do relatório feito à mão)
   const tipos = __decl.ordenar(await __decl.opcoes('TIPO DE FREQUENCIA', fixos), ['DIARI', 'DIA', 'GERAL']);
   if (!tipos.length) return {erro: 'o Gier não mostrou o tipo de frequência'};
-  let tipo = null, disc = null;
+  const nota = d => { const n = __decl.sem(d);
+    return n.includes('AULA DIA') ? 0 : n.includes('EDUCACAO INFANTIL') ? 1 : 2; };
+  const vistos = new Set(), lista = [];
   for (const t of tipos) {
-    const discs = __decl.ordenar(await __decl.opcoes('Componente Curricular',
-                                 Object.assign({}, fixos, {IdTipoComponente: t.id})), ['AULA DIA', 'DIA']);
-    if (!discs.length) continue;
-    if (!tipo) { tipo = t; disc = discs[0]; }
-    if (__decl.sem(discs[0].descricao).includes('AULA DIA')) { tipo = t; disc = discs[0]; break; }
+    const discs = await __decl.opcoes('Componente Curricular', Object.assign({}, fixos, {IdTipoComponente: t.id}));
+    for (const d of (discs || [])) {
+      if (vistos.has(d.id) || __decl.sem(d.descricao).includes('EDUCACAO FISICA')) continue;
+      vistos.add(d.id);
+      lista.push({id: d.id, disciplina: d.descricao, tipo: t.descricao});
+    }
   }
-  if (!disc) return {erro: 'o Gier não mostrou o componente curricular'};
+  if (!lista.length) return {erro: 'o Gier não mostrou o componente curricular'};
+  lista.sort((a, b) => nota(a.disciplina) - nota(b.disciplina));
+  return {candidatos: lista};
+})(%s)"""
 
+JS_PDF = r"""(async (args) => {
   const v = await fetch('/relatorio/verificar-processamento?idRelatorio=348');
   let fila = false;
   if (v.ok) { try { fila = (await v.json()).processaJob === true; } catch (e) {} }
+  if (fila) return {fila: true};
 
   const p = [
     {Descricao: 'AnoLetivo', Valor: String(args.ano)},
     {Descricao: 'IdTurma', Valor: String(args.turma)},
-    {Descricao: 'IdDisciplina', Valor: String(disc.id)},
+    {Descricao: 'IdDisciplina', Valor: String(args.disc)},
     {Descricao: 'Mes', Valor: '-1'},
     {Descricao: 'CompensacaoFalta', Valor: '1'},
     {Descricao: 'DataReferencia', Valor: new Date().toISOString().split('T')[0]},
     {Descricao: 'IdEstrutura', Valor: document.getElementById('hdfIdEstrutura').value},
     {Descricao: 'IdUsuario', Valor: document.getElementById('hdfIPessoa').value},
   ];
-  const info = {tipo: tipo.descricao, disciplina: disc.descricao};
-  if (fila) return {fila: true, info: info};
   p.push({Descricao: 'nomeusuario', Valor: (document.getElementById('hdfNomeUsuario') || {}).value || ''});
   p.push({Descricao: 'urlorigem', Valor: window.location.origin.toLowerCase() + ' '});
   const r = await fetch('/relatorio/imprimir', {
     method: 'POST', headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({id: '348', nome: 'Relatório GIER', parametros: p, tipo: '0'})
   });
-  if (!r.ok) return {erro: 'imprimir: ' + r.status, info: info};
+  if (!r.ok) return {erro: 'imprimir: ' + r.status, status: r.status};
   const bytes = new Uint8Array(await r.arrayBuffer());
   let bin = '';
   for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
-  return {pdf: btoa(bin), info: info};
+  return {pdf: btoa(bin)};
 })(%s)"""
+
+
+def _tem_dias_letivos(caminho):
+    """O PDF só serve se ao menos uma criança tem dias letivos."""
+    import frequencia_gier as fg
+    alunos, _info = fg.extrair_dados_pdf(caminho)
+    return any(a.get("dias_letivos") for a in alunos)
 
 
 # ---------------------------------------------------------------------------
@@ -417,29 +431,61 @@ def buscar_frequencia(pasta_perfil, pasta_pdfs, avisar, cancelado, minutos_login
             if cancelado():
                 raise Cancelado("Cancelado.")
             avisar("Baixando a frequência: turma {} de {} ({})".format(n, len(turmas), t["nome"]))
-            args = json.dumps({"ano": dados["ano"], "escola": dados["escola"], "etapa": t["etapa"],
-                               "turma": t["id"]})
-            try:
-                nav.avaliar(JS_FUNCOES)
-                r = nav.avaliar(JS_PDF % args, espera=240) or {}
-            except ErroGier as erro:
-                problemas.append("{}: {}".format(t["nome"], erro))
-                continue
-            if r.get("fila"):
-                problemas.append("{}: o Gier mandou o relatório para a fila de processamento".format(t["nome"]))
-                continue
-            if not r.get("pdf"):
-                problemas.append("{}: {}".format(t["nome"], r.get("erro") or "sem PDF"))
-                continue
-            dados_pdf = base64.b64decode(r["pdf"])
-            if not dados_pdf.startswith(b"%PDF"):
-                problemas.append("{}: o Gier não devolveu um PDF".format(t["nome"]))
+            args = {"ano": dados["ano"], "escola": dados["escola"], "etapa": t["etapa"], "turma": t["id"]}
+            opcoes = {}
+            for tentativa in range(3):              # o Gier às vezes responde 502 e dá certo logo depois
+                try:
+                    nav.avaliar(JS_FUNCOES)
+                    opcoes = nav.avaliar(JS_CANDIDATOS % json.dumps(args), espera=60) or {}
+                    break
+                except ErroGier as erro:
+                    opcoes = {"erro": str(erro)}
+                    registrar("{} | lista de componentes: {} (tentativa {})".format(t["nome"], erro, tentativa + 1))
+                    if tentativa < 2:
+                        time.sleep(3)
+            if not opcoes.get("candidatos"):
+                problemas.append("{}: {}".format(t["nome"], opcoes.get("erro") or "sem componente curricular"))
                 continue
             nome_arq = "".join(c if c.isalnum() else "_" for c in t["nome"]).strip("_") or "turma"
             caminho = os.path.join(pasta_pdfs, "{:02d}_{}.pdf".format(n, nome_arq))
-            with open(caminho, "wb") as f:
-                f.write(dados_pdf)
-            caminhos.append(caminho)
+            motivo = "o Gier não trouxe dias letivos para esta turma"
+            achou = fila = False
+            for cand in opcoes["candidatos"]:
+                r = {}
+                for tentativa in range(3):          # o Gier às vezes responde 502 e dá certo logo depois
+                    try:
+                        nav.avaliar(JS_FUNCOES)
+                        r = nav.avaliar(JS_PDF % json.dumps(dict(args, disc=cand["id"])), espera=240) or {}
+                    except ErroGier as erro:
+                        r = {"erro": str(erro), "status": 500}
+                    if r.get("pdf") or r.get("fila") or (r.get("status") or 0) < 500:
+                        break
+                    registrar("{} | {}: {} (tentativa {})".format(t["nome"], cand["disciplina"], r.get("erro"), tentativa + 1))
+                    if tentativa < 2:
+                        time.sleep(3)
+                if r.get("fila"):
+                    fila = True
+                    break
+                if not r.get("pdf"):
+                    motivo = r.get("erro") or "sem PDF"
+                    continue
+                dados_pdf = base64.b64decode(r["pdf"])
+                if not dados_pdf.startswith(b"%PDF"):
+                    motivo = "o Gier não devolveu um PDF"
+                    continue
+                with open(caminho, "wb") as f:
+                    f.write(dados_pdf)
+                if _tem_dias_letivos(caminho):
+                    registrar("{} | componente: {} | tipo: {}".format(t["nome"], cand["disciplina"], cand["tipo"]))
+                    caminhos.append(caminho)
+                    achou = True
+                    break
+                registrar("{} | {}: veio sem dias letivos".format(t["nome"], cand["disciplina"]))
+                os.remove(caminho)
+            if fila:
+                problemas.append("{}: o Gier mandou o relatório para a fila de processamento".format(t["nome"]))
+            elif not achou:
+                problemas.append("{}: {}".format(t["nome"], motivo))
         return caminhos, problemas
     finally:
         nav.fechar()

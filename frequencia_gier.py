@@ -337,6 +337,8 @@ def _extrair_dados_textos(paginas_texto):
                 continue
 
             m = RE_TURMA.search(linha) or RE_TURMA_SIMPLES.search(linha)
+            if m and m.group(1).strip().lower() == "componente":    # cabeçalho em branco: "Turma: Componente Curricular:"
+                m = None
             if m:
                 turma_atual = " ".join(m.group(1).strip().split())
                 continue

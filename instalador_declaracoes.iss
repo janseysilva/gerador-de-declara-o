@@ -5,7 +5,7 @@
 ; ============================================================
 
 #define MeuApp        "Declarações Escolares"
-#define MeuAppVersao  "2.6"
+#define MeuAppVersao  "2.7"
 #define MeuAutor      "Jansey Felix Silva"
 #define MeuExe        "DeclaracoesEscolares.exe"
 

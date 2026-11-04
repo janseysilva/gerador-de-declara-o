@@ -12,6 +12,7 @@ TURMAS = [{"id": 501, "descricao": "PE II -TURMA-E", "nomes": ex.NOMES[:3]},
           {"id": 502, "descricao": "PE I -TURMA-B", "nomes": ex.NOMES[3:]},
           {"id": 503, "descricao": "PE I -TURMA-Z (com erro)", "nomes": []}]
 REGISTRO = []
+FALHOU_UMA_VEZ = set()      # a 2ª turma responde 502 uma vez ao listar componentes, como o Gier de verdade
 
 PAGINA_348 = """<html><head><title>Relatório de Frequência Diária</title></head><body>
 <input type="hidden" value="27212" id="hdfIdEstrutura"><input type="hidden" value="999" id="hdfIPessoa">
@@ -101,16 +102,19 @@ class H(BaseHTTPRequestHandler):
                 assert f.get("IdModalidade") == "1", f
                 r = [{"id": t["id"], "descricao": t["descricao"]} for t in TURMAS]
             elif el == "TIPO DE FREQUENCIA":
-                r = [{"id": 9, "descricao": "POR COMPONENTE"}, {"id": 5, "descricao": "FREQUÊNCIA DIÁRIA"}]
+                r = [{"id": 2, "descricao": "FREQUÊNCIA POR COMPONENTE"}, {"id": 1, "descricao": "FREQUÊNCIA DIÁRIA"}]
             elif el == "Componente Curricular":
-                assert f.get("IdTipoComponente") == "5", f
-                r = [{"id": 77, "descricao": "AULA DIA"}]
+                if f.get("IdTurma") == "502" and "502" not in FALHOU_UMA_VEZ:
+                    FALHOU_UMA_VEZ.add("502")
+                    return self._enviar("bad gateway", status=502)
+                # como no Gier de verdade: Educação Física vem primeiro, nos dois tipos; o programa deve ignorá-la
+                r = [{"id": 208, "descricao": "EDUCAÇÃO FÍSICA"}, {"id": 549, "descricao": "EDUCAÇÃO INFANTIL"}]
             else:
                 r = []
             return self._enviar(json.dumps(r), "application/json")
         if self.path == "/relatorio/imprimir":
             p = {x["Descricao"]: x["Valor"] for x in d["parametros"]}
-            assert d["id"] == "348" and p["Mes"] == "-1" and p["IdDisciplina"] == "77", p
+            assert d["id"] == "348" and p["Mes"] == "-1" and p["IdDisciplina"] == "549", p
             t = next(t for t in TURMAS if str(t["id"]) == p["IdTurma"])
             if not t["nomes"]:
                 return self._enviar("erro interno", status=500)

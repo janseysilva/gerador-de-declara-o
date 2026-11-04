@@ -33,7 +33,7 @@ import tkinter as tk
 import tkinter.font as tkfont
 from tkinter import ttk, filedialog, messagebox
 
-VERSAO_PROGRAMA = "2.6"
+VERSAO_PROGRAMA = "2.7"
 NOME_PROGRAMA = "Declarações Escolares"
 
 
@@ -528,6 +528,7 @@ def importar_frequencia_pdfs(caminhos):
                                    "do Gier?".format(nome_arq))
             continue
         resumo["arquivos"] += 1
+        tem_dias = False
         for al in alunos:
             mes = (al.get("mes") or info.get("mes") or "?").capitalize()
             _p, pct, obs = fg.calcular_presenca(al)
@@ -539,9 +540,14 @@ def importar_frequencia_pdfs(caminhos):
             # a mesma criança pode aparecer 2 vezes no mês (ex.: TR e depois MA): fica a de mais dias
             if chave not in d or reg["dias"] >= d[chave]["dias"]:
                 d[chave] = reg
-            resumo["criancas"].add(chave)
-            resumo["meses"].add(mes)
-            resumo["turmas"].add(al["turma"])
+            if reg["dias"]:                       # linha sem dias letivos não conta como frequência trazida
+                resumo["criancas"].add(chave)
+                resumo["meses"].add(mes)
+                resumo["turmas"].add(al["turma"])
+                tem_dias = True
+        if not tem_dias:
+            resumo["erros"].append("{}: o PDF veio sem dias letivos. No Gier, escolha o componente "
+                                   "EDUCAÇÃO INFANTIL (\"AULA DIA\").".format(nome_arq))
         if info.get("ano"):
             banco["ano"] = info["ano"]
     resumo["criancas"] = len(resumo["criancas"])
@@ -563,7 +569,7 @@ def frequencia_do_aluno(banco, aluno):
         if reg is None and chaves[0]:
             parecido = difflib.get_close_matches(chaves[0], list(d.keys()), n=1, cutoff=0.87)
             reg = d[parecido[0]] if parecido else None
-        if reg is not None:
+        if reg is not None and reg.get("dias"):   # mês sem aula não entra no período da declaração
             achados.append((mes, reg))
     return sorted(achados, key=lambda x: _mes_chave(x[0]))
 
