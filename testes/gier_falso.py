@@ -31,13 +31,17 @@ PAGINA_348 = """<html><head><title>Relatório de Frequência Diária</title></he
 <input type="hidden" data-id="15" data-descricao="Componente Curricular" data-parametro="IdDisciplina" value="">
 <input type="hidden" data-id="11" data-descricao="Mes" data-parametro="mes" value="">
 <input type="hidden" data-id="79" data-descricao="COMPENSAÇÃO DE FALTA" data-parametro="CompensacaoFalta" value="">
-</div></form><h1>Relatório de Frequência Diária (Gier de teste)</h1></body></html>"""
+</div></form><h1>Relatório de Frequência Diária (Gier de teste)</h1>
+<img src="/lento" alt=""><!-- como o widget de Libras: nunca termina de carregar -->
+</body></html>"""
 
 PAGINA_LOGIN = """<html><body><h1>Login do Gier (teste)</h1><form method="post" action="/Login">
 <input name="usuario" value="teste"><input type="password" name="senha" value="x"><button id="b">Entrar</button></form>
 <script>setTimeout(() => document.getElementById('b').click(), 2500);</script></body></html>"""
 
-PAGINA_HOME = """<html><body><input type="hidden" value="999" id="hdfIPessoa"><h1>Início do Gier (teste)</h1></body></html>"""
+# a página inicial depois do login: tem o topo do Gier, mas não o campo hdfIPessoa
+PAGINA_HOME = """<html><head><title>Gier - Início</title></head><body><span id="spanRelatoriosNaoLidos"></span>
+<input type="text" id="pesquisarNavegacaoGeral"><h1>Início do Gier (teste)</h1></body></html>"""
 
 
 class H(BaseHTTPRequestHandler):
@@ -68,6 +72,10 @@ class H(BaseHTTPRequestHandler):
             return self._enviar(PAGINA_LOGIN)
         if self.path.startswith("/Home"):
             return self._enviar(PAGINA_HOME)
+        if self.path.startswith("/lento"):
+            import time
+            time.sleep(120)
+            return self._enviar(b"", "image/png")
         if self.path.startswith("/relatorio/verificar-processamento"):
             return self._enviar(json.dumps({"processaJob": False}), "application/json")
         self._enviar("nada", status=404)

@@ -220,8 +220,14 @@ class Navegador:
 JS_ESTADO = r"""(() => {
   const r = document.getElementById('IdRelatorio');
   const p = document.getElementById('hdfIPessoa');
-  return {rel: r ? r.value : null, pessoa: p ? p.value : null, url: location.href,
-          pronto: document.readyState};
+  // elementos do topo do Gier que só aparecem depois do login
+  const logado = !!(document.getElementById('spanRelatoriosNaoLidos') ||
+                    document.getElementById('pesquisarNavegacaoGeral') ||
+                    (p && p.value && p.value !== '0'));
+  const senha = !!document.querySelector('input[type=password]');
+  return {rel: r ? r.value : null, pessoa: p ? p.value : null, logado: logado, senha: senha,
+          origem: location.origin, caminho: location.pathname, pronto: document.readyState,
+          titulo: (document.title || '').slice(0, 80)};
 })()"""
 
 JS_FUNCOES = r"""
@@ -326,11 +332,13 @@ JS_PDF = r"""(async (args) => {
 # O passo a passo inteiro (roda numa thread; avisa o andamento por `avisar`)
 # ---------------------------------------------------------------------------
 
-def buscar_frequencia(pasta_perfil, pasta_pdfs, avisar, cancelado, minutos_login=10):
+def buscar_frequencia(pasta_perfil, pasta_pdfs, avisar, cancelado, minutos_login=10, registrar=None):
     """
     Devolve (lista de caminhos de PDF, lista de problemas).
-    avisar(texto) mostra o andamento; cancelado() -> True para parar.
+    avisar(texto) mostra o andamento; cancelado() -> True para parar;
+    registrar(texto) anota detalhes no log (endereços das páginas, sem senha).
     """
+    registrar = registrar or (lambda texto: None)
     nav_info = achar_navegador()
     if not nav_info:
         raise ErroGier("Não achei o Google Chrome nem o Microsoft Edge neste computador.")
@@ -343,27 +351,55 @@ def buscar_frequencia(pasta_perfil, pasta_pdfs, avisar, cancelado, minutos_login
         fim = time.time() + minutos_login * 60
         aba_ok = None
         ultimo_ir = 0
+        visto = {}
+        avisou_entrou = False
+        avisou_dica = False
+        inicio = time.time()
         while aba_ok is None:
             if cancelado():
                 raise Cancelado("Cancelado.")
             if time.time() > fim:
-                raise ErroGier("Passaram {} minutos sem entrar no Gier.".format(minutos_login))
-            for aba in nav.abas():
-                if not aba.get("url", "").lower().startswith(GIER_BASE.lower()):
+                raise ErroGier("Passaram {} minutos sem chegar ao relatório do Gier.".format(minutos_login))
+            abas = nav.abas()
+            for aba in abas:
+                url = aba.get("url", "")
+                if not url.lower().startswith(("http://", "https://")):
                     continue
                 try:
                     nav.usar_aba(aba)
                     estado = nav.avaliar(JS_ESTADO, espera=10) or {}
-                except ErroGier:
+                except ErroGier as erro:
+                    chave = (aba.get("id"), "erro", str(erro))
+                    if visto.get(aba.get("id")) != chave:
+                        visto[aba.get("id")] = chave
+                        registrar("aba {}: não consegui ler ({})".format(url.split("?")[0], erro))
                     continue
-                if estado.get("rel") == ID_RELATORIO and estado.get("pronto") == "complete":
+                chave = (aba.get("id"), estado.get("origem"), estado.get("caminho"), estado.get("rel"),
+                         estado.get("logado"), estado.get("senha"), estado.get("pronto"))
+                if visto.get(aba.get("id")) != chave:
+                    visto[aba.get("id")] = chave
+                    registrar("página: {}{} | título: {} | relatório: {} | logado: {} | campo de senha: {} | {}".format(
+                        estado.get("origem"), estado.get("caminho"), estado.get("titulo"), estado.get("rel"),
+                        estado.get("logado"), estado.get("senha"), estado.get("pronto")))
+                # a página do relatório já tem tudo que precisamos quando o HTML terminou de ler
+                # (não espera o widget de Libras e outras coisas de fora carregarem)
+                if estado.get("rel") == ID_RELATORIO and estado.get("pronto") in ("interactive", "complete"):
                     aba_ok = aba
                     break
-                # já logado, mas em outra página do Gier: vai para o relatório
-                if estado.get("pessoa") not in (None, "", "0") and time.time() - ultimo_ir > 8:
-                    nav.ir_para(url_relatorio())
+                # já entrou, mas está em outra página do Gier: vai para o relatório
+                if estado.get("logado") and not estado.get("senha") and time.time() - ultimo_ir > 8:
+                    if not avisou_entrou:
+                        avisar("Entrou no Gier. Abrindo o relatório de frequência...")
+                        avisou_entrou = True
+                    destino = (estado.get("origem") or GIER_BASE).rstrip("/") + "/Relatorio/RelatorioFiltro/" + ID_RELATORIO
+                    registrar("indo para " + destino)
+                    nav.ir_para(destino)
                     ultimo_ir = time.time()
             if aba_ok is None:
+                if not avisou_entrou and not avisou_dica and time.time() - inicio > 90:
+                    avisar("Se você já entrou no Gier, abra no {} o relatório \"Relatório de Frequência "
+                           "Diária\" (Acompanhamento Diário). O programa continua sozinho a partir dele.".format(nome_nav))
+                    avisou_dica = True
                 time.sleep(1.5)
 
         # 2. Lista as turmas

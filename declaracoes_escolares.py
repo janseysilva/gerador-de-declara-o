@@ -33,7 +33,7 @@ import tkinter as tk
 import tkinter.font as tkfont
 from tkinter import ttk, filedialog, messagebox
 
-VERSAO_PROGRAMA = "2.5"
+VERSAO_PROGRAMA = "2.6"
 NOME_PROGRAMA = "Declarações Escolares"
 
 
@@ -2975,7 +2975,8 @@ class JanelaGier(tk.Toplevel):
         try:
             caminhos, problemas = gier_auto.buscar_frequencia(
                 os.path.join(pasta_dados(), "navegador_gier"), pasta_pdfs,
-                lambda texto: self.fila.put(("andamento", texto)), lambda: self._parar)
+                lambda texto: self.fila.put(("andamento", texto)), lambda: self._parar,
+                registrar=self.app._registrar)
             self.fila.put(("fim", (caminhos, problemas)))
         except gier_auto.Cancelado as erro:
             self.fila.put(("cancelado", str(erro)))
