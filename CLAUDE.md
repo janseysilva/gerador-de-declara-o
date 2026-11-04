@@ -1,6 +1,6 @@
 # Declarações Escolares: regras e andamento (leia antes de tudo)
 
-Programa do Windows (Python + tkinter) feito para o Jansey, do CMEI Argentina Barros (SEMED Manaus). Gera declarações escolares a partir do arquivo de alunos do sistema da SEMED. Tem o mesmo visual do **Frequência Inteligente** (repositório `janseysilva/frequencia-inteligente`), de onde vieram cores, faixa azul, quadros numerados, pílulas (`Chip`) e botões (`Botao`).
+Programa do Windows (Python + tkinter) feito para o Jansey, do CMEI Argentina Barros (SEMED Manaus). Gera declarações escolares a partir do arquivo de alunos do sistema da SEMED. Tem o visual do **Frequência Inteligente** (repositório `janseysilva/frequencia-inteligente`), de onde vieram cores, faixa azul, quadros numerados, pílulas (`Chip`) e botões (`Botao`).
 
 ## Regras do Jansey
 1. Responder sempre em **português (pt-BR)**.
@@ -10,7 +10,7 @@ Programa do Windows (Python + tkinter) feito para o Jansey, do CMEI Argentina Ba
 4. Ele não preenche nada à mão: o que está no banco de dados sai sozinho, e o que não está ele preenche **no próprio programa**.
 5. Dados reais de alunos **nunca** vão para o GitHub nem para páginas publicadas. Use o arquivo de exemplo inventado (ver "Testes").
 
-## Como o programa funciona (versão 2.0)
+## Como o programa funciona (versão 2.1)
 - **Configuração:** "Abrir arquivo de alunos" lê o `TXTALUNO_xxxxx.txt` da SEMED (ANSI, colunas separadas por `;`) e **substitui** o banco (`%APPDATA%\Declaracoes Escolares\alunos.json`). Lá também ficam os dados da escola, o gestor(a) e o secretário(a) (nome, cargo, matrícula), a numeração, PDF/Word, a pasta de saída e o logotipo.
 - **Tela principal:**
   1. **Pesquisar aluno:** campo + botão Pesquisar (ou Enter). As opções aparecem embaixo. Ao clicar num aluno, o nome vai para o campo e a lista some. Com um só resultado, ele é escolhido sozinho.
@@ -23,7 +23,8 @@ Programa do Windows (Python + tkinter) feito para o Jansey, do CMEI Argentina Ba
 - **Justificativa de falta:** no quadro 3 se preenchem data e quantidade de faltas, Bolsa Família, motivo (com "Outro" e o campo "Qual?") e o responsável. O responsável é escolhido em pílulas Mãe/Pai/Responsável/Outro; "Outro" abre o campo Nome. O WhatsApp vem do arquivo.
 - **Termo de compromisso (CEMASP):** responsável em pílulas (como acima), CPF ao lado com máscara (vem do arquivo quando o escolhido é quem fez a matrícula; ao trocar de pessoa, é apagado), profissão e horário. Endereço, bairro, telefone, série, turma e turno saem do arquivo. "pai/mãe/responsável" é marcado conforme o nome.
 - O instalador (Inno Setup) fecha o programa aberto antes de atualizar (`taskkill` no `[Code]`).
-- **Telas baixas (altura < 900, ex.: 1366x768 do outro PC da escola):** faixa azul mais baixa (66 em vez de 92). O espaço das opções da pesquisa só aparece quando há resultado. A tela principal e a Configuração ficam dentro de `AreaRolavel`, que ganha barra de rolagem sozinha quando falta espaço (a rodinha do mouse rola). Testar sempre também em `xvfb-run -s "-screen 0 1366x768x24"` com `tk scaling 1.6`.
+- **Fonte Arial, 20% maior** (`FONTE`, `AUMENTO_LETRA = 1.2`, aplicado no `tk scaling`), escolhida pelo Jansey a partir das imagens de revisão. O programa **abre maximizado** (`_maximizar`), e o texto do quadro 2 quebra conforme a largura (`_ajustar_quebras`).
+- **Telas baixas (altura < 900, ex.: 1366x768 do outro PC da escola):** faixa azul mais baixa (66 em vez de 92). O espaço das opções da pesquisa só aparece quando há resultado. A tela principal e a Configuração ficam dentro de `AreaRolavel`, que ganha barra de rolagem sozinha quando falta espaço (a rodinha do mouse rola). Quando o conteúdo muda de altura, `_reajustar()` acerta a barra na hora.
 
 ## Arquivo da SEMED (TXTALUNO)
 - Formato atual com 40 colunas, entre elas: `Ano da Matrícula` (2026, **não** é código), `Nome Resp. Matrícula` → responsavel, `CPF do responsável` (sem os zeros da frente: `formatar_cpf` completa), `Codigo do Aluno`, `Nome do Aluno`, `Nome Social`, `Data de Nascimento`, `Nome da Mãe`, `Nome do Pai`, `Sexo`, `Bairro do Aluno`, `Endereço do Aluno`, `CEP do Aluno`, `Telefone`, `Telefone Altern`, `Fase` (1 PERIODO / 2 PERIODO), `Turma`, `Turno`.
@@ -32,11 +33,12 @@ Programa do Windows (Python + tkinter) feito para o Jansey, do CMEI Argentina Ba
 
 ## Testes (no contêiner Linux)
 - Python com tkinter: `/usr/bin/python3.12`. Instalar com `--break-system-packages`: reportlab, python-docx, pillow. Rodar a janela com `xvfb-run -a -s "-screen 0 1920x1080x24"`. Para fotografar, usar `PIL.ImageGrab.grab(bbox=..., xdisplay=os.environ["DISPLAY"])`.
-- A fonte do Windows (Segoe UI) é cerca de 20% mais alta que a daqui. Para simular, usar `tk scaling 1.6` e conferir se nenhum `TEntry`/`TCombobox` fica com `winfo_height() < winfo_reqheight()` (espremido). A janela tem 960×840.
+- Para simular o Windows, usar `tk scaling 1.3333` (96 dpi) antes de criar a janela; o programa multiplica por 1,2 → 1,6. Como o Xvfb não maximiza, usar `app.geometry("LxA+0+0")`.
+- **Teste de todas as telas** (o Jansey pediu): os 7 tipos, as variações com "Outro", a janela Corrigir e a Configuração, em 1920×1080, 1600×900, 1366×768 (maximizada e restaurada 960×688), 1280×720 e 1024×768. Ele procura qualquer Label/Entry/Combobox/Canvas mais estreito ou mais baixo que o pedido, ou fora da janela. Na versão 2.1, não houve nenhum problema.
 - Arquivo de exemplo inventado (mesmas 40 colunas): gerar de novo a partir do cabeçalho do TXTALUNO real, com nomes, CPFs e telefones inventados. **Não commitar.**
 
 ## Pendências / ideias
-- A v1.9-build13 ficou boa no PC dele, mas cortava no outro PC da escola (tela 1366x768). A versão 2.0 corrige isso; falta montar o instalador quando ele pedir e testar no outro PC.
+- A v1.9-build13 ficou boa no PC dele, mas cortava no outro PC da escola (tela 1366x768). As versões 2.0 e 2.1 corrigem isso (rolagem, telas baixas, Arial maior, maximizado). Falta montar o instalador quando ele pedir e testar nos dois PCs.
 - O release **v1.8-build12** foi montado sem querer, porque ele pediu para não montar logo depois. Ele pode apagá-lo em Releases.
 - Página de revisão com fotos e documentos (artifact): https://claude.ai/artifact/GeF7noaEdUPEtnX5biJv1k (mostra a 1.6; atualizar quando for revisar de novo).
 - `versao-navegador/` tem a primeira versão em HTML, que não é mais usada.

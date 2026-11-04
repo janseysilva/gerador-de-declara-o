@@ -32,7 +32,7 @@ import tkinter as tk
 import tkinter.font as tkfont
 from tkinter import ttk, filedialog, messagebox
 
-VERSAO_PROGRAMA = "2.0"
+VERSAO_PROGRAMA = "2.1"
 NOME_PROGRAMA = "Declarações Escolares"
 
 
@@ -1251,7 +1251,8 @@ COR_LINHA = "#F4F7FC"
 COR_VERDE = "#1E8E4E"
 COR_LARANJA = "#C55A11"
 ALTURA_CABECALHO = 92
-FONTE = "Segoe UI"
+FONTE = "Arial"             # escolhida pelo Jansey (letra das imagens de revisão)
+AUMENTO_LETRA = 1.2         # letras 20% maiores que o padrão do Windows
 
 
 def _misturar(cor_a, cor_b, t):
@@ -1627,13 +1628,18 @@ class Aplicacao(tk.Tk):
 
     def __init__(self):
         super().__init__()
+        # Letras 20% maiores (o "scaling" do Tk vale para todas as fontes em pontos)
+        try:
+            self.tk.call("tk", "scaling", float(self.tk.call("tk", "scaling")) * AUMENTO_LETRA)
+        except tk.TclError:
+            pass
         self.title(NOME_PROGRAMA)
         try:
             self.iconbitmap(caminho_recurso("icone_declaracoes.ico"))
         except tk.TclError:
             pass
         largura = min(960, self.winfo_screenwidth() - 40)
-        # um pouco mais alta que o Frequência: o quadro 3 precisa caber inteiro com a Segoe UI
+        # tamanho ao restaurar; o programa abre maximizado (ver o fim do __init__)
         altura = min(840, self.winfo_screenheight() - 80)
         self.tela_baixa = self.winfo_screenheight() < 900          # ex.: notebooks 1366x768
         self.geometry("{}x{}+{}+{}".format(
@@ -1687,6 +1693,17 @@ class Aplicacao(tk.Tk):
         self._parentesco_padrao({})
         self._atualizar_relogio()
         self.after(100, self.entrada_busca.focus_set)
+        self._maximizar()
+
+    def _maximizar(self):
+        """Abre ocupando a tela inteira (o Jansey trabalha com o programa maximizado)."""
+        try:
+            self.state("zoomed")                  # Windows
+        except tk.TclError:
+            try:
+                self.attributes("-zoomed", True)  # Linux
+            except tk.TclError:
+                pass
 
     # -- montagem -------------------------------------------------------------
 
@@ -1745,7 +1762,7 @@ class Aplicacao(tk.Tk):
         self.area = AreaRolavel(self, COR_FUNDO)
         self.area.pack(fill="both", expand=True)
         corpo = tk.Frame(self.area.miolo, bg=COR_FUNDO)
-        corpo.pack(fill="both", expand=True, padx=26, pady=(14 if self.tela_baixa else 18, 14))
+        corpo.pack(fill="both", expand=True, padx=26, pady=(12, 8) if self.tela_baixa else (18, 14))
         corpo.columnconfigure(0, weight=4, uniform="col")
         corpo.columnconfigure(1, weight=5, uniform="col")
         corpo.rowconfigure(1, weight=1)
@@ -1788,7 +1805,7 @@ class Aplicacao(tk.Tk):
                                     font=(FONTE, 9), anchor="nw", justify="left")
         self.quadro_lista = tk.Frame(self.area_result, bg=COR_CARTAO)
         self.rolagem = ttk.Scrollbar(self.quadro_lista, orient="vertical")
-        self.tela = tk.Canvas(self.quadro_lista, bg=COR_CARTAO, highlightthickness=0, bd=0,
+        self.tela = tk.Canvas(self.quadro_lista, bg=COR_CARTAO, highlightthickness=0, bd=0,  # rola sozinha
                               yscrollcommand=self.rolagem.set)
         self.rolagem.configure(command=self.tela.yview)
         self.tela.pack(side="left", fill="both", expand=True)
@@ -1823,6 +1840,7 @@ class Aplicacao(tk.Tk):
         self.alerta_aluno = tk.Label(c2, text="", bg=COR_CARTAO, fg=COR_LARANJA, font=(FONTE, 9, "bold"),
                                      anchor="w", justify="left", wraplength=340)
         self.alerta_aluno.pack(fill="x", pady=(4, 0))
+        c2.bind("<Configure>", lambda e: self._ajustar_quebras(e.width))
 
         # 3 - Tipo de declaração ---------------------------------------------
         externo, c3, _ = cartao(corpo, "Tipo de declaração", 3)
@@ -2008,6 +2026,7 @@ class Aplicacao(tk.Tk):
             w["digitar"].pack(side="left", fill="x", expand=True)
             if self.aluno and self.var_tipo.get() in TERMOS:
                 w["entrada"].focus_set()
+        self._reajustar()
 
     def _ajustar_nome_resp(self, w):
         """Mostra o nome inteiro; se não couber ao lado do CPF/WhatsApp, termina com '…' (só na tela)."""
@@ -2028,6 +2047,7 @@ class Aplicacao(tk.Tk):
             self.campo_motivo_outro.entrada.focus_set()
         else:
             self.campo_motivo_outro.pack_forget()
+        self._reajustar()
 
     def _preparar_termos(self, a):
         """Ao escolher o aluno: limpa os campos dos termos e mostra o que vem do arquivo."""
@@ -2105,6 +2125,14 @@ class Aplicacao(tk.Tk):
         m = re.fullmatch(r"(\d{1,2}):(\d{2})", texto or "")
         return bool(m) and int(m.group(1)) < 24 and int(m.group(2)) < 60
 
+    def _reajustar(self):
+        """Conteúdo mudou de altura: acerta a barra de rolagem na hora (sem esperar a vigia)."""
+        try:
+            self.update_idletasks()
+            self.area.ajustar()
+        except (tk.TclError, AttributeError):
+            pass
+
     def _mostrar_extras(self):
         for chave, quadro in self.extras.items():
             if chave == self.var_tipo.get():
@@ -2113,6 +2141,7 @@ class Aplicacao(tk.Tk):
                 quadro.pack_forget()
 
     # -- banco de dados e pesquisa ------------------------------------------
+        self._reajustar()
 
     def _atualizar_banco(self):
         tem = bool(self.alunos)
@@ -2142,6 +2171,7 @@ class Aplicacao(tk.Tk):
             self.area_result.pack(fill="x", pady=(10, 0))
         elif not mostrar and gerenciado:
             self.area_result.pack_forget()
+        self._reajustar()
 
     def _mostrar_dica(self, texto):
         self._mostrar_area_result(True)
@@ -2288,6 +2318,7 @@ class Aplicacao(tk.Tk):
         self.ext["freq"].set("")
         self.ext["destino"].set("")
         self._mostrar_aluno()
+        self._reajustar()
         self.var_status.set("Escolha o tipo de declaração e clique em Gerar declaração.")
 
     def _responsaveis(self, a):
@@ -2331,6 +2362,7 @@ class Aplicacao(tk.Tk):
             self.outro_resp.pack(fill="x", pady=(2, 0))
             if self.aluno and self.var_tipo.get() == "comparecimento":
                 self.entrada_outro.focus_set()
+        self._reajustar()
 
     def _ao_mudar_assinatura(self):
         quem = self.var_assina.get()
@@ -2339,6 +2371,19 @@ class Aplicacao(tk.Tk):
         if not self.cfg.get(quem + "_nome"):
             self.var_status.set("O nome do {} ainda não foi cadastrado na Configuração; a declaração sai só "
                                 "com a linha para assinatura.".format("gestor(a)" if quem == "gestor" else "secretário(a)"))
+
+    _quebra_info = 270
+
+    def _ajustar_quebras(self, largura):
+        """Com a janela maximizada, o texto do quadro 2 usa a largura toda antes de quebrar a linha."""
+        largura = max(largura, 200)
+        self.nome_aluno.configure(wraplength=largura)
+        self.alerta_aluno.configure(wraplength=largura)
+        col0 = max((w.winfo_reqwidth() for w in self.info_aluno.grid_slaves(column=0)), default=90)
+        self._quebra_info = max(largura - col0 - 14, 150)
+        for w in self.info_aluno.grid_slaves(column=1):
+            w.configure(wraplength=self._quebra_info)
+        self.info_compromisso.configure(wraplength=max(self.area_extras.winfo_width(), 300))
 
     def _mostrar_aluno(self):
         a = self.aluno
@@ -2379,7 +2424,7 @@ class Aplicacao(tk.Tk):
                      anchor="nw").grid(row=i, column=0, sticky="nw", padx=(0, 10), pady=1)
             tk.Label(self.info_aluno, text=valor or "não consta no arquivo", bg=COR_CARTAO,
                      fg=COR_TEXTO if valor else "#A0A8B8", font=(FONTE, 9), anchor="nw", justify="left",
-                     wraplength=270).grid(row=i, column=1, sticky="nw", pady=1)
+                     wraplength=self._quebra_info).grid(row=i, column=1, sticky="nw", pady=1)
         faltam = [n for n, k in (("sexo", "sexo"), ("fase/ano", "serie"), ("nascimento", "nasc")) if not a.get(k)]
         self.alerta_aluno.configure(text="Faltou na lista: " + ", ".join(faltam) + ". Use “Corrigir”." if faltam else "")
         self.botao_corrigir.pack(side="right")
@@ -2630,7 +2675,7 @@ class JanelaConfiguracao(tk.Toplevel):
         self.title("Configuração – " + NOME_PROGRAMA)
         self.configure(bg=COR_FUNDO)
         self.transient(app)
-        largura, altura = 900, min(760, app.winfo_screenheight() - 80)
+        largura, altura = min(1060, app.winfo_screenwidth() - 40), min(800, app.winfo_screenheight() - 80)
         self.geometry("{}x{}+{}+{}".format(largura, altura, app.winfo_rootx() + 30, max(app.winfo_rooty() - 20, 0)))
         self.minsize(820, 420)
         cfg = app.cfg
