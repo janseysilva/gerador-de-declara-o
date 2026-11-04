@@ -32,7 +32,7 @@ import tkinter as tk
 import tkinter.font as tkfont
 from tkinter import ttk, filedialog, messagebox
 
-VERSAO_PROGRAMA = "1.9"
+VERSAO_PROGRAMA = "2.0"
 NOME_PROGRAMA = "Declarações Escolares"
 
 
@@ -1512,6 +1512,60 @@ def cartao(pai, titulo, numero):
     return externo, corpo, direita
 
 
+class AreaRolavel(tk.Frame):
+    """
+    Área que ganha barra de rolagem só quando a janela é menor que o conteúdo
+    (telas baixas, como 1366x768). Quando há espaço, o conteúdo estica como antes.
+    Use `.miolo` como pai do conteúdo.
+    """
+
+    def __init__(self, pai, bg):
+        super().__init__(pai, bg=bg)
+        self.tela = tk.Canvas(self, bg=bg, highlightthickness=0, bd=0)
+        self.barra = ttk.Scrollbar(self, orient="vertical", command=self.tela.yview)
+        self.tela.configure(yscrollcommand=self.barra.set)
+        self.tela.pack(side="left", fill="both", expand=True)
+        self.miolo = tk.Frame(self.tela, bg=bg)
+        self._janela = self.tela.create_window((0, 0), window=self.miolo, anchor="nw")
+        self.tela.bind("<Configure>", lambda e: self.ajustar())
+        self._ultimo = None
+        self._vigiar()
+
+    def _vigiar(self):
+        """O conteúdo muda (aluno, tipo de declaração...): confere a altura de tempos em tempos."""
+        try:
+            atual = (self.miolo.winfo_reqheight(), self.tela.winfo_height(), self.tela.winfo_width())
+        except tk.TclError:
+            return
+        if atual != self._ultimo:
+            self._ultimo = atual
+            self.ajustar()
+        self.after(250, self._vigiar)
+
+    def ajustar(self):
+        largura, altura = self.tela.winfo_width(), self.tela.winfo_height()
+        if largura <= 1:
+            return
+        precisa = self.miolo.winfo_reqheight()
+        alto = max(altura, precisa)
+        self.tela.itemconfigure(self._janela, width=largura, height=alto)
+        self.tela.configure(scrollregion=(0, 0, largura, alto))
+        if precisa > altura + 1:
+            if not self.barra.winfo_ismapped():
+                self.barra.pack(side="right", fill="y", before=self.tela)
+        elif self.barra.winfo_ismapped():
+            self.barra.pack_forget()
+            self.tela.yview_moveto(0)
+
+    def rolar(self, evento):
+        """Rola com a rodinha do mouse; devolve True se rolou."""
+        if not self.barra.winfo_ismapped():
+            return False
+        passo = int(-evento.delta / 120) or (-1 if evento.delta > 0 else 1)
+        self.tela.yview_scroll(passo, "units")
+        return True
+
+
 def configurar_estilo(raiz):
     estilo = ttk.Style(raiz)
     try:
@@ -1581,10 +1635,11 @@ class Aplicacao(tk.Tk):
         largura = min(960, self.winfo_screenwidth() - 40)
         # um pouco mais alta que o Frequência: o quadro 3 precisa caber inteiro com a Segoe UI
         altura = min(840, self.winfo_screenheight() - 80)
+        self.tela_baixa = self.winfo_screenheight() < 900          # ex.: notebooks 1366x768
         self.geometry("{}x{}+{}+{}".format(
             largura, altura, (self.winfo_screenwidth() - largura) // 2,
             max((self.winfo_screenheight() - altura) // 2 - 20, 0)))
-        self.minsize(860, 640)
+        self.minsize(860, 480)
         self.configure(bg=COR_FUNDO)
 
         self.cfg = dict(CONFIG_PADRAO)
@@ -1636,23 +1691,32 @@ class Aplicacao(tk.Tk):
     # -- montagem -------------------------------------------------------------
 
     def _montar_cabecalho(self):
-        cab = tk.Canvas(self, height=ALTURA_CABECALHO, highlightthickness=0, bd=0, bg=COR_AZUL_ESCURO)
+        # Em telas baixas (ex.: 1366x768) a faixa fica mais baixa para sobrar espaço aos quadros.
+        baixa = self.tela_baixa
+        self.alt_cab = 66 if baixa else ALTURA_CABECALHO
+        cab = tk.Canvas(self, height=self.alt_cab, highlightthickness=0, bd=0, bg=COR_AZUL_ESCURO)
         cab.pack(fill="x")
         self.cabecalho = cab
         # Logo: folha com linhas e o "certo" verde (prima da prancheta do Frequência)
-        _retangulo_arredondado(cab, 26, 19, 80, 73, 14, fill="#FFFFFF", outline="#FFFFFF")
-        cab.create_polygon(40, 29, 58, 29, 66, 37, 66, 63, 40, 63, fill=COR_AZUL, outline=COR_AZUL)
-        cab.create_polygon(58, 29, 58, 37, 66, 37, fill="#9DB6E6", outline="#9DB6E6")
+        _retangulo_arredondado(cab, 26, 19, 80, 73, 14, fill="#FFFFFF", outline="#FFFFFF", tags="logo")
+        cab.create_polygon(40, 29, 58, 29, 66, 37, 66, 63, 40, 63, fill=COR_AZUL, outline=COR_AZUL, tags="logo")
+        cab.create_polygon(58, 29, 58, 37, 66, 37, fill="#9DB6E6", outline="#9DB6E6", tags="logo")
         for yy in (40, 46):
-            cab.create_line(45, yy, 56, yy, fill="#DCE8FF", width=2, capstyle="round")
+            cab.create_line(45, yy, 56, yy, fill="#DCE8FF", width=2, capstyle="round", tags="logo")
         cab.create_line(46, 54, 51, 59, 60, 49, fill="#3DDC84", width=4,
-                        capstyle="round", joinstyle="round")
-        cab.create_text(98, 35, anchor="w", text=NOME_PROGRAMA, fill="white", font=(FONTE, 20, "bold"))
-        cab.create_text(98, 63, anchor="w", fill="#D5E1F7", font=(FONTE, 9),
+                        capstyle="round", joinstyle="round", tags="logo")
+        if baixa:
+            cab.scale("logo", 26, 19, 0.78, 0.78)
+            cab.move("logo", 0, -9)
+        x_texto = 84 if baixa else 98
+        cab.create_text(x_texto, 24 if baixa else 35, anchor="w", text=NOME_PROGRAMA, fill="white",
+                        font=(FONTE, 16 if baixa else 20, "bold"))
+        cab.create_text(x_texto, 48 if baixa else 63, anchor="w", fill="#D5E1F7", font=(FONTE, 9),
                         text="Pesquise o aluno pelo nome e gere a declaração pronta para imprimir.")
-        self._id_escola = cab.create_text(0, 28, anchor="e", text="", fill="white", font=(FONTE, 9, "bold"))
-        self._id_data = cab.create_text(0, 47, anchor="e", text="", fill="#D5E1F7", font=(FONTE, 9))
-        self._id_config = cab.create_text(0, 66, anchor="e", text="Configuração", fill="white",
+        y1, y2, y3 = (15, 33, 51) if baixa else (28, 47, 66)
+        self._id_escola = cab.create_text(0, y1, anchor="e", text="", fill="white", font=(FONTE, 9, "bold"))
+        self._id_data = cab.create_text(0, y2, anchor="e", text="", fill="#D5E1F7", font=(FONTE, 9))
+        self._id_config = cab.create_text(0, y3, anchor="e", text="Configuração", fill="white",
                                           tags="config", font=(FONTE, 9, "underline"))
         cab.tag_bind("config", "<Button-1>", lambda e: self._abrir_configuracao())
         cab.tag_bind("config", "<Enter>", lambda e: cab.configure(cursor="hand2"))
@@ -1664,7 +1728,7 @@ class Aplicacao(tk.Tk):
         largura = max(cab.winfo_width(), 1)
         cab.delete("degrade")
         for x in range(0, largura, 4):
-            cab.create_rectangle(x, 0, x + 4, ALTURA_CABECALHO, outline="", tags="degrade",
+            cab.create_rectangle(x, 0, x + 4, self.alt_cab, outline="", tags="degrade",
                                  fill=_misturar("#17327A", "#2A63C8", x / largura))
         cab.tag_lower("degrade")
         for item in (self._id_escola, self._id_data, self._id_config):
@@ -1678,8 +1742,10 @@ class Aplicacao(tk.Tk):
 
     def _montar_interface(self):
         self._montar_cabecalho()
-        corpo = tk.Frame(self, bg=COR_FUNDO)
-        corpo.pack(fill="both", expand=True, padx=26, pady=(18, 16))
+        self.area = AreaRolavel(self, COR_FUNDO)
+        self.area.pack(fill="both", expand=True)
+        corpo = tk.Frame(self.area.miolo, bg=COR_FUNDO)
+        corpo.pack(fill="both", expand=True, padx=26, pady=(14 if self.tela_baixa else 18, 14))
         corpo.columnconfigure(0, weight=4, uniform="col")
         corpo.columnconfigure(1, weight=5, uniform="col")
         corpo.rowconfigure(1, weight=1)
@@ -1715,7 +1781,7 @@ class Aplicacao(tk.Tk):
         self.botao_pesquisar.pack(side="left", padx=(10, 0))
 
         # Resultado da pesquisa: só aparece depois de clicar em Pesquisar
-        self.area_result = tk.Frame(c1, bg=COR_CARTAO, height=96)
+        self.area_result = tk.Frame(c1, bg=COR_CARTAO, height=70 if self.tela_baixa else 96)
         self.area_result.pack(fill="x", pady=(10, 0))
         self.area_result.pack_propagate(False)
         self.dica_result = tk.Label(self.area_result, text="", bg=COR_CARTAO, fg=COR_TEXTO_FRACO,
@@ -1823,7 +1889,7 @@ class Aplicacao(tk.Tk):
         f = tk.Frame(self.area_extras, bg=COR_CARTAO)
         self.chips_resp = tk.Frame(f, bg=COR_CARTAO)
         self.chips_resp.pack(fill="x")
-        self.linha_resp = tk.Frame(f, bg=COR_CARTAO, height=32)
+        self.linha_resp = tk.Frame(f, bg=COR_CARTAO, height=34)
         self.linha_resp.pack(fill="x", pady=(4, 0))
         self.linha_resp.pack_propagate(False)
         self.nome_resp = tk.Label(self.linha_resp, text="", bg=COR_CARTAO, fg=COR_TEXTO,
@@ -1834,6 +1900,7 @@ class Aplicacao(tk.Tk):
         self.entrada_outro = ttk.Entry(self.outro_resp, textvariable=e["resp_nome"], style="Campo.TEntry",
                                        font=(FONTE, 10))
         self.entrada_outro.pack(side="left", fill="x", expand=True)
+        self.after_idle(lambda: self.linha_resp.configure(height=max(34, self.entrada_outro.winfo_reqheight() + 4)))
         linha = tk.Frame(f, bg=COR_CARTAO)
         linha.pack(fill="x", pady=(4, 0))
         campo(linha, "Motivo", e["motivo"], opcoes=[
@@ -1890,9 +1957,8 @@ class Aplicacao(tk.Tk):
                  font=(FONTE, 9, "bold")).pack(anchor="w", pady=(6, 0))
         w["chips"] = tk.Frame(pai, bg=COR_CARTAO)
         w["chips"].pack(fill="x", pady=(2, 0))
-        linha = tk.Frame(pai, bg=COR_CARTAO, height=32)
+        linha = tk.Frame(pai, bg=COR_CARTAO)
         linha.pack(fill="x", pady=(4, 0))
-        linha.pack_propagate(False)
         lado = tk.Frame(linha, bg=COR_CARTAO)
         lado.pack(side="right")
         tk.Label(lado, text=rotulo_lado, bg=COR_CARTAO, fg=COR_TEXTO_FRACO,
@@ -2054,10 +2120,10 @@ class Aplicacao(tk.Tk):
         self.botao_pesquisar.definir_ativo(tem)
         self._limpar_resultados()
         if tem:
-            self._mostrar_dica("Digite o nome do aluno (ou só uma parte dele) e clique em Pesquisar.\n"
-                               "Os alunos encontrados aparecem aqui; clique no certo.")
+            self._mostrar_area_result(False)       # o espaço das opções só aparece quando há resultado
             self.var_status.set("Pesquise o aluno, escolha o tipo de declaração e clique em Gerar declaração.")
         else:
+            self._mostrar_area_result(True)
             self.dica_result.place_forget()
             self.quadro_lista.place_forget()
             self.vazio.place(x=0, y=0, relwidth=1, relheight=1)
@@ -2070,7 +2136,15 @@ class Aplicacao(tk.Tk):
         else:
             self.dica_busca.place(x=38, rely=0.5, anchor="w")
 
+    def _mostrar_area_result(self, mostrar):
+        gerenciado = self.area_result.winfo_manager() == "pack"   # vale mesmo antes de a janela aparecer
+        if mostrar and not gerenciado:
+            self.area_result.pack(fill="x", pady=(10, 0))
+        elif not mostrar and gerenciado:
+            self.area_result.pack_forget()
+
     def _mostrar_dica(self, texto):
+        self._mostrar_area_result(True)
         self.vazio.place_forget()
         self.quadro_lista.place_forget()
         self.dica_result.configure(text=texto)
@@ -2094,10 +2168,21 @@ class Aplicacao(tk.Tk):
 
     def _roda_do_mouse(self, evento):
         alvo = self.winfo_containing(evento.x_root, evento.y_root)
-        while alvo is not None and alvo is not self.quadro_lista:
-            alvo = alvo.master
-        if alvo is not None and self.rolagem.winfo_ismapped():
+        if alvo is None:
+            return
+        if alvo.winfo_toplevel() is not self:              # rodinha na janela de Configuração
+            topo = alvo.winfo_toplevel()
+            if hasattr(topo, "area"):
+                topo.area.rolar(evento)
+            return
+        w = alvo
+        while w is not None and w is not self.quadro_lista:
+            w = w.master
+        if w is not None and self.rolagem.winfo_ismapped():
             self.tela.yview_scroll(int(-evento.delta / 120) or (-1 if evento.delta > 0 else 1), "units")
+            return
+        if alvo.winfo_class() not in ("TCombobox", "Listbox"):
+            self.area.rolar(evento)
 
     def _pesquisar(self):
         if not self.alunos:
@@ -2121,6 +2206,7 @@ class Aplicacao(tk.Tk):
         self.todos_achados = achados[:100]
         self.dica_result.place_forget()
         self.vazio.place_forget()
+        self._mostrar_area_result(True)
         self.quadro_lista.place(x=0, y=0, relwidth=1, relheight=1)
         self._desenhar_linhas(self.todos_achados)
         if len(achados) == 1:
@@ -2189,6 +2275,7 @@ class Aplicacao(tk.Tk):
         self._limpar_resultados()
         self.quadro_lista.place_forget()
         self.dica_result.place_forget()
+        self._mostrar_area_result(False)
 
     def _escolher(self, a):
         self.aluno = {k: v for k, v in a.items() if not k.startswith("_")}
@@ -2545,7 +2632,7 @@ class JanelaConfiguracao(tk.Toplevel):
         self.transient(app)
         largura, altura = 900, min(760, app.winfo_screenheight() - 80)
         self.geometry("{}x{}+{}+{}".format(largura, altura, app.winfo_rootx() + 30, max(app.winfo_rooty() - 20, 0)))
-        self.minsize(820, 560)
+        self.minsize(820, 420)
         cfg = app.cfg
         self.vars = {k: tk.StringVar(value=str(cfg.get(k, ""))) for _, k, *_ in self.CAMPOS}
         self.var_numero = tk.StringVar(value=str(cfg.get("numero", 1)))
@@ -2555,7 +2642,9 @@ class JanelaConfiguracao(tk.Toplevel):
         self.var_pasta = tk.StringVar(value=cfg.get("pasta_saida") or
                                       os.path.join(pasta_documentos(), "Declarações Escolares"))
 
-        corpo = tk.Frame(self, bg=COR_FUNDO)
+        self.area = AreaRolavel(self, COR_FUNDO)
+        self.area.pack(fill="both", expand=True)
+        corpo = tk.Frame(self.area.miolo, bg=COR_FUNDO)
         corpo.pack(fill="both", expand=True, padx=22, pady=18)
         corpo.columnconfigure(0, weight=1, uniform="c")
         corpo.columnconfigure(1, weight=1, uniform="c")
