@@ -36,6 +36,17 @@ jobs:
       - name: Gerar o .exe (PyInstaller)
         run: python -m PyInstaller --noconfirm DeclaracoesEscolares.spec
 
+      - name: Testar o .exe lendo um PDF do Gier (nomes inventados)
+        run: |
+          python testes/pdf_gier_exemplo.py "$PWD\gier_exemplo.pdf"
+          Start-Process -FilePath "dist\DeclaracoesEscolares.exe" -ArgumentList "--testar-pdf", "`"$PWD\gier_exemplo.pdf`"", "`"$PWD\resultado.json`"" -Wait
+          Get-Content resultado.json
+          $r = Get-Content resultado.json -Raw | ConvertFrom-Json
+          if (-not $r.parece_acompanhamento -or $r.criancas -ne 18) {
+            Write-Error "O .exe não conseguiu ler o PDF do Gier"
+            exit 1
+          }
+
       - name: Gerar o instalador (Inno Setup)
         run: |
           $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"

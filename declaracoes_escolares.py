@@ -34,7 +34,7 @@ import tkinter as tk
 import tkinter.font as tkfont
 from tkinter import ttk, filedialog, messagebox
 
-VERSAO_PROGRAMA = "2.3"
+VERSAO_PROGRAMA = "2.4"
 NOME_PROGRAMA = "Declarações Escolares"
 
 
@@ -518,7 +518,7 @@ def importar_frequencia_pdfs(caminhos):
     if not isinstance(banco, dict):
         banco = {}
     meses = banco.setdefault("meses", {})
-    resumo = {"arquivos": 0, "criancas": 0, "meses": set(), "turmas": set(), "erros": []}
+    resumo = {"arquivos": 0, "criancas": set(), "meses": set(), "turmas": set(), "erros": []}
     for caminho in caminhos:
         nome_arq = os.path.basename(caminho)
         try:
@@ -542,11 +542,12 @@ def importar_frequencia_pdfs(caminhos):
             # a mesma criança pode aparecer 2 vezes no mês (ex.: TR e depois MA): fica a de mais dias
             if chave not in d or reg["dias"] >= d[chave]["dias"]:
                 d[chave] = reg
-            resumo["criancas"] += 1
+            resumo["criancas"].add(chave)
             resumo["meses"].add(mes)
             resumo["turmas"].add(al["turma"])
         if info.get("ano"):
             banco["ano"] = info["ano"]
+    resumo["criancas"] = len(resumo["criancas"])
     banco["atualizado_em"] = datetime.now().isoformat(timespec="seconds")
     gravar_json(ARQ_FREQ, banco)
     return banco, resumo
@@ -2853,15 +2854,23 @@ class Aplicacao(tk.Tk):
         pai = pai or self
         pasta = pasta_downloads()
         if not getattr(self, "_vigia", None):
+            try:
+                import frequencia_gier as fg
+                import pypdfium2  # noqa: F401  (se faltar no .exe, avisa já)
+            except Exception as erro:
+                messagebox.showerror(NOME_PROGRAMA, "O leitor de PDF não abriu neste computador:\n\n{}".format(erro),
+                                     parent=pai)
+                return
             messagebox.showinfo(NOME_PROGRAMA,
                 "O Gier vai abrir no navegador.\n\n"
                 "1. Entre com o seu usuário e senha.\n"
                 "2. Escolha a turma e, em MÊS, marque \"Todos\" (ou os meses que quiser).\n"
                 "3. Clique em Imprimir e baixe o PDF.\n"
                 "4. Repita para as outras turmas.\n\n"
-                "Cada PDF que chegar na pasta {} entra sozinho no programa. "
-                "Não precisa abrir nada aqui.".format(os.path.basename(pasta) or pasta), parent=pai)
-            self._vigia = {"pasta": pasta, "inicio": time.time() - 60, "ultimo": time.time(),
+                "Cada PDF que chegar na pasta abaixo entra sozinho no programa, e aparece "
+                "um aviso verde no canto da tela.\n\n{}".format(pasta), parent=pai)
+            self._registrar_vigia("começou a vigiar {}".format(pasta))
+            self._vigia = {"pasta": pasta, "inicio": time.time() - 15 * 60, "ultimo": time.time(),
                            "pendentes": {}, "feitos": {}, "recebidos": 0, "meses": set(),
                            "turmas": set(), "erros": 0}
             self.after(1500, self._vigiar_downloads)
@@ -2886,7 +2895,7 @@ class Aplicacao(tk.Tk):
         v = getattr(self, "_vigia", None)
         if not v:
             return ""
-        texto = "Esperando os PDFs do Gier na pasta {}...".format(os.path.basename(v["pasta"]) or v["pasta"])
+        texto = "Esperando os PDFs do Gier em {}".format(v["pasta"])
         if v["recebidos"]:
             texto += "  {} PDF(s) recebido(s): {} turma(s), {}.".format(
                 v["recebidos"], len(v["turmas"]), ", ".join(sorted(v["meses"], key=_mes_chave)))
@@ -2904,53 +2913,130 @@ class Aplicacao(tk.Tk):
             except Exception:
                 self._ouvintes_vigia.remove(funcao)
 
+    def _registrar_vigia(self, texto):
+        """Anota o que a vigia viu em vigia.log (para descobrir o que deu errado)."""
+        try:
+            with open(os.path.join(pasta_dados(), "vigia.log"), "a", encoding="utf-8") as f:
+                f.write("{}  {}\n".format(datetime.now().strftime("%d/%m/%Y %H:%M:%S"), texto))
+        except Exception:
+            pass
+
     def _vigiar_downloads(self):
         v = getattr(self, "_vigia", None)
         if not v:
             return
         if time.time() - v["ultimo"] > VIGIA_MINUTOS * 60:
+            self._registrar_vigia("parou: {} min sem PDF novo".format(VIGIA_MINUTOS))
             self.parar_vigia_gier()
             return
-        novos = []
+        try:
+            self._procurar_pdfs_novos(v)
+        except Exception as erro:
+            import traceback
+            self._registrar_vigia("ERRO: " + traceback.format_exc())
+            self.var_status.set("Erro ao ler a pasta {}: {}".format(v["pasta"], erro))
+        finally:
+            if getattr(self, "_vigia", None) is v:
+                self.after(2000, self._vigiar_downloads)
+
+    def _procurar_pdfs_novos(self, v):
         try:
             nomes = os.listdir(v["pasta"])
-        except OSError:
-            nomes = []
+        except OSError as erro:
+            self._registrar_vigia("não consegui abrir a pasta {}: {}".format(v["pasta"], erro))
+            return
+        prontos = []
         for nome in nomes:
-            if not nome.lower().endswith(".pdf"):
+            minusculo = nome.lower()
+            if minusculo.endswith((".crdownload", ".tmp", ".part", ".partial", ".download", ".ini")):
                 continue
             caminho = os.path.join(v["pasta"], nome)
             try:
                 st = os.stat(caminho)
             except OSError:
                 continue
+            if not st.st_size or os.path.isdir(caminho):
+                continue
+            # no Windows st_ctime é a hora em que o arquivo foi criado (o download)
+            if max(st.st_mtime, st.st_ctime) < v["inicio"]:
+                continue
             marca = (st.st_size, st.st_mtime)
-            if st.st_mtime < v["inicio"] or v["feitos"].get(caminho) == marca or not st.st_size:
+            if v["feitos"].get(caminho) == marca:
                 continue
             # só lê quando o arquivo parou de crescer (download terminado)
-            if v["pendentes"].get(caminho) == marca:
-                novos.append(caminho)
-                v["feitos"][caminho] = marca
-                v["pendentes"].pop(caminho, None)
-            else:
+            if v["pendentes"].get(caminho) != marca:
                 v["pendentes"][caminho] = marca
-        if novos:
-            import frequencia_gier as fg
-            do_gier = [c for c in novos if fg.parece_acompanhamento(c)]
-            if do_gier:
-                try:
-                    banco, resumo = importar_frequencia_pdfs(do_gier)
-                except Exception:
-                    banco, resumo = None, None
-                if resumo:
-                    self.freq = banco
-                    v["recebidos"] += resumo["arquivos"]
-                    v["meses"] |= resumo["meses"]
-                    v["turmas"] |= resumo["turmas"]
-                    v["ultimo"] = time.time()
-                    self.atualizar_frequencia_tela()
-                    self._avisar_vigia()
-        self.after(2000, self._vigiar_downloads)
+                continue
+            try:
+                with open(caminho, "rb") as f:
+                    eh_pdf = f.read(5) == b"%PDF-"
+            except OSError as erro:            # o navegador ainda está gravando: tenta de novo
+                self._registrar_vigia("{}: ainda ocupado ({})".format(nome, erro))
+                continue
+            v["feitos"][caminho] = marca
+            v["pendentes"].pop(caminho, None)
+            if eh_pdf:
+                prontos.append(caminho)
+        for caminho in prontos:
+            self._receber_pdf(v, caminho)
+
+    def _receber_pdf(self, v, caminho):
+        import frequencia_gier as fg
+        nome = os.path.basename(caminho)
+        if not fg.parece_acompanhamento(caminho):
+            self._registrar_vigia("{}: não é o Acompanhamento Diário".format(nome))
+            self.var_status.set("Chegou \"{}\", mas não é o relatório \"Acompanhamento Diário\" do Gier. "
+                                "Continuo esperando.".format(nome))
+            return
+        banco, resumo = importar_frequencia_pdfs([caminho])
+        if not resumo["arquivos"]:
+            self._registrar_vigia("{}: {}".format(nome, "; ".join(resumo["erros"])))
+            messagebox.showwarning(NOME_PROGRAMA, "Chegou o PDF do Gier \"{}\", mas não consegui ler a "
+                                   "frequência.\n\n{}".format(nome, "\n".join(resumo["erros"])), parent=self)
+            return
+        self.freq = banco
+        v["recebidos"] += 1
+        v["meses"] |= resumo["meses"]
+        v["turmas"] |= resumo["turmas"]
+        v["ultimo"] = time.time()
+        meses = sorted(resumo["meses"], key=_mes_chave)
+        periodo = meses[0] if len(meses) == 1 else "{} a {}".format(meses[0], meses[-1])
+        self._registrar_vigia("{}: OK, {} ({}), {} crianças".format(
+            nome, ", ".join(sorted(resumo["turmas"])), periodo, resumo["criancas"]))
+        self.atualizar_frequencia_tela()
+        self._avisar_vigia()
+        self._aviso_flutuante("✓  Frequência recebida do Gier",
+                              "{} · {} · {} crianças".format(", ".join(sorted(resumo["turmas"])), periodo,
+                                                            resumo["criancas"]))
+
+    def _aviso_flutuante(self, titulo, texto, segundos=8):
+        """Aviso verde no canto da tela, por cima do navegador, que some sozinho."""
+        try:
+            antigo = getattr(self, "_janela_aviso", None)
+            if antigo is not None and antigo.winfo_exists():
+                antigo.destroy()
+            j = tk.Toplevel(self)
+            self._janela_aviso = j
+            j.overrideredirect(True)
+            j.attributes("-topmost", True)
+            caixa = tk.Frame(j, bg=COR_VERDE, padx=18, pady=12)
+            caixa.pack()
+            tk.Label(caixa, text=titulo, bg=COR_VERDE, fg="#FFFFFF", font=(FONTE, 11, "bold"),
+                     anchor="w").pack(anchor="w")
+            tk.Label(caixa, text=texto, bg=COR_VERDE, fg="#FFFFFF", font=(FONTE, 9), anchor="w",
+                     justify="left", wraplength=420).pack(anchor="w", pady=(2, 0))
+            tk.Label(caixa, text="Pode baixar a próxima turma.", bg=COR_VERDE, fg="#DDF5E6",
+                     font=(FONTE, 9), anchor="w").pack(anchor="w", pady=(2, 0))
+            j.update_idletasks()
+            x = j.winfo_screenwidth() - j.winfo_reqwidth() - 24
+            y = j.winfo_screenheight() - j.winfo_reqheight() - 72
+            j.geometry("+{}+{}".format(max(x, 0), max(y, 0)))
+            j.bind("<Button-1>", lambda e: j.destroy())
+            for w in caixa.winfo_children() + [caixa]:
+                w.bind("<Button-1>", lambda e: j.destroy())
+            j.after(segundos * 1000, lambda: j.winfo_exists() and j.destroy())
+        except Exception:
+            pass
 
     def importar_alunos(self, caminho):
         with open(caminho, "rb") as f:
@@ -3216,7 +3302,27 @@ class JanelaConfiguracao(tk.Toplevel):
         self.destroy()
 
 
+def testar_pdf_linha_de_comando(caminho, saida):
+    """DeclaracoesEscolares.exe --testar-pdf ARQUIVO.pdf RESULTADO.json (sem abrir a janela)."""
+    res = {"versao": VERSAO_PROGRAMA, "pasta_downloads": pasta_downloads()}
+    try:
+        import pypdfium2
+        import frequencia_gier as fg
+        res["pypdfium2"] = getattr(pypdfium2, "V_PYPDFIUM2", "ok")
+        res["parece_acompanhamento"] = fg.parece_acompanhamento(caminho)
+        alunos, info = fg.extrair_dados_pdf(caminho)
+        res["criancas"] = len(alunos)
+        res["meses"] = info.get("meses")
+    except Exception as erro:
+        res["erro"] = repr(erro)
+    with open(saida, "w", encoding="utf-8") as f:
+        json.dump(res, f, ensure_ascii=False)
+
+
 def main():
+    if len(sys.argv) >= 4 and sys.argv[1] == "--testar-pdf":
+        testar_pdf_linha_de_comando(sys.argv[2], sys.argv[3])
+        return
     app = Aplicacao()
     if not app.alunos:
         app.after(400, app._abrir_configuracao)

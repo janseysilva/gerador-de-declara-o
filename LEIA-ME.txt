@@ -43,8 +43,10 @@ DECLARAÇÕES ESCOLARES - como usar
    quadro 3, na declaração de Frequência). O Gier abre no navegador: entre com
    seu usuário e senha, escolha a turma, marque "Todos" em MÊS, clique em
    Imprimir e baixe o PDF. Repita para as outras turmas. Cada PDF que chegar na
-   pasta Downloads entra sozinho no programa (a mensagem embaixo mostra quantos
-   chegaram). O programa para de esperar sozinho depois de 30 minutos sem PDF
+   pasta Downloads entra sozinho no programa: aparece um aviso verde no canto
+   da tela e a mensagem embaixo mostra quantos chegaram. Se nada acontecer,
+   confira se o PDF foi salvo na pasta mostrada no aviso. O que o programa viu
+   fica anotado em %APPDATA%\Declaracoes Escolares\vigia.log. O programa para de esperar sozinho depois de 30 minutos sem PDF
    novo, ou no botão "Parar de esperar". Se já tiver o PDF, use "Abrir PDF...".
    Depois disso, o quadro "Aluno" mostra a frequência e, na
    declaração de Frequência, a % sai preenchida sozinha. Em "Período", escolha
