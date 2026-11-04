@@ -32,7 +32,7 @@ import tkinter as tk
 import tkinter.font as tkfont
 from tkinter import ttk, filedialog, messagebox
 
-VERSAO_PROGRAMA = "2.1"
+VERSAO_PROGRAMA = "2.2"
 NOME_PROGRAMA = "Declarações Escolares"
 
 
@@ -1692,8 +1692,17 @@ class Aplicacao(tk.Tk):
         self._mostrar_aluno()
         self._parentesco_padrao({})
         self._atualizar_relogio()
-        self.after(100, self.entrada_busca.focus_set)
         self._maximizar()
+        self.after(150, self._focar_pesquisa)
+
+    def _focar_pesquisa(self):
+        """Ao abrir, o cursor já fica piscando na barra de pesquisa."""
+        try:
+            self.focus_force()
+            self.entrada_busca.focus_set()
+            self._atualizar_dica()
+        except tk.TclError:
+            pass
 
     def _maximizar(self):
         """Abre ocupando a tela inteira (o Jansey trabalha com o programa maximizado)."""
@@ -1783,15 +1792,19 @@ class Aplicacao(tk.Tk):
         lupa.pack(side="left", padx=(4, 0))
         self.entrada_busca = tk.Entry(caixa, textvariable=self.var_busca, bd=0, relief="flat",
                                       font=(FONTE, 12), bg="#FFFFFF", fg=COR_TEXTO,
-                                      insertbackground=COR_AZUL_ESCURO, highlightthickness=0)
+                                      insertbackground=COR_AZUL_ESCURO, insertwidth=2,
+                                      insertontime=600, insertofftime=400, highlightthickness=0)
         self.entrada_busca.pack(side="left", fill="x", expand=True, ipady=6, padx=(2, 10))
+        # clicar em qualquer parte da barra (inclusive na lupa) leva o cursor para o campo
+        for w in (caixa, lupa):
+            w.bind("<Button-1>", lambda e: self.entrada_busca.focus_set())
         self.entrada_busca.bind("<FocusIn>", lambda e: caixa.configure(highlightbackground=COR_AZUL))
         self.entrada_busca.bind("<FocusOut>", lambda e: caixa.configure(highlightbackground="#CFD8EA"))
         self.entrada_busca.bind("<Return>", lambda e: self._pesquisar())
         self.entrada_busca.bind("<KP_Enter>", lambda e: self._pesquisar())
         self.dica_busca = tk.Label(caixa, text="Digite o nome do aluno (ou parte dele) ou o código",
                                    bg="#FFFFFF", fg="#9AA5B8", font=(FONTE, 12), cursor="xterm")
-        self.dica_busca.place(x=38, rely=0.5, anchor="w")
+        self.dica_busca.place(x=self._x_dica(), rely=0.5, anchor="w")
         self.dica_busca.bind("<Button-1>", lambda e: self.entrada_busca.focus_set())
         self.botao_pesquisar = Botao(linha, "Pesquisar", self._pesquisar, estilo="azul",
                                      fonte=(FONTE, 11, "bold"), pad_x=26, pad_y=8)
@@ -2159,11 +2172,18 @@ class Aplicacao(tk.Tk):
             self.var_status.set("Comece abrindo o arquivo de alunos na Configuração.")
         self._atualizar_dica()
 
+    def _x_dica(self):
+        """Posição da frase cinza: logo depois do lugar onde o cursor pisca."""
+        try:
+            return self.entrada_busca.winfo_x() + 8 if self.entrada_busca.winfo_x() > 0 else 48
+        except tk.TclError:
+            return 48
+
     def _atualizar_dica(self):
         if self.var_busca.get():
             self.dica_busca.place_forget()
         else:
-            self.dica_busca.place(x=38, rely=0.5, anchor="w")
+            self.dica_busca.place(x=self._x_dica(), rely=0.5, anchor="w")
 
     def _mostrar_area_result(self, mostrar):
         gerenciado = self.area_result.winfo_manager() == "pack"   # vale mesmo antes de a janela aparecer
