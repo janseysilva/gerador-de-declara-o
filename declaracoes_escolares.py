@@ -33,7 +33,7 @@ import tkinter as tk
 import tkinter.font as tkfont
 from tkinter import ttk, filedialog, messagebox
 
-VERSAO_PROGRAMA = "2.9"
+VERSAO_PROGRAMA = "2.10"
 NOME_PROGRAMA = "Declarações Escolares"
 
 
@@ -630,11 +630,8 @@ TIPOS = [
     ("compromisso", "Termo de compromisso", "TERMO DE CIÊNCIA, COMPROMISSO E RESPONSABILIDADE"),
 ]
 TERMOS = {"justificativa", "compromisso"}        # formulários: saem preenchidos com o que houver no arquivo
-FILEIRAS_TIPOS = [["matricula", "frequencia", "transferencia"], ["conclusao", "comparecimento"],
-                  ["justificativa", "compromisso"]]
 NOME_TIPO = {t[0]: t[1] for t in TIPOS}
 TITULO_TIPO = {t[0]: t[2] for t in TIPOS}
-
 ETAPAS = {
     "ei": "da Educação Infantil",
     "efi": "do Ensino Fundamental – Anos Iniciais",
@@ -1910,7 +1907,7 @@ class Aplicacao(tk.Tk):
         corpo.pack(fill="both", expand=True, padx=26, pady=(12, 8) if self.tela_baixa else (18, 14))
         corpo.columnconfigure(0, weight=4, uniform="col")
         corpo.columnconfigure(1, weight=5, uniform="col")
-        corpo.rowconfigure(1, weight=1)
+        corpo.rowconfigure(2, weight=1)        # o quadro 4 fica colado no 3 e ocupa o resto da coluna
         folga = 7 if self.tela_baixa else 12   # espaço entre os quadros
 
         # 1 - Pesquisar aluno ------------------------------------------------
@@ -1978,7 +1975,7 @@ class Aplicacao(tk.Tk):
 
         # 2 - Aluno escolhido -------------------------------------------------
         externo, c2, self.canto_aluno = cartao(corpo, "Aluno", 2)
-        externo.grid(row=1, column=0, sticky="nsew", padx=(0, 8), pady=(0, folga))
+        externo.grid(row=1, column=0, rowspan=2, sticky="nsew", padx=(0, 8), pady=(0, folga))
         self.botao_corrigir = Botao(self.canto_aluno, "Corrigir", self._corrigir_aluno,
                                     estilo="tracejado", fonte=(FONTE, 9, "bold"), pad_y=3, pad_x=10, raio=8)
         self.nome_aluno = tk.Label(c2, text="", bg=COR_CARTAO, fg=COR_AZUL_ESCURO, font=(FONTE, 12, "bold"),
@@ -1995,24 +1992,32 @@ class Aplicacao(tk.Tk):
         # 3 - Tipo de declaração ---------------------------------------------
         externo, c3, _ = cartao(corpo, "Tipo de declaração", 3)
         externo.grid(row=1, column=1, sticky="nsew", padx=(8, 0), pady=(0, folga))
-        grade = tk.Frame(c3, bg=COR_CARTAO)
-        grade.pack(fill="x")
-        for chaves in FILEIRAS_TIPOS:
-            fileira = tk.Frame(grade, bg=COR_CARTAO)
-            fileira.pack(fill="x", pady=(0, 4))
-            for chave in chaves:
-                Chip(fileira, NOME_TIPO[chave], self.var_tipo, chave).pack(side="left", padx=(0, 6))
+        self._chave_do_nome = {nome: chave for chave, nome in NOME_TIPO.items()}
+        self.var_nome_tipo = tk.StringVar(value=NOME_TIPO[self.var_tipo.get()])
+        q = campo(c3, "Escolha a declaração", self.var_nome_tipo, opcoes=list(NOME_TIPO.values()), editavel=False)
+        q.pack(fill="x", pady=(0, 6))
+        self.combo_tipo = q.entrada
+        self.var_nome_tipo.trace_add("write", lambda *_: self.var_tipo.set(self._chave_do_nome[self.var_nome_tipo.get()]))
+        self.var_tipo.trace_add("write", lambda *_: self._acertar_nome_tipo())
         self.area_extras = tk.Frame(c3, bg=COR_CARTAO)
         self.area_extras.pack(fill="both", expand=True, pady=(4, 0))
         self._montar_extras()
 
         # 4 - Comandos Gier ---------------------------------------------------
-        externo, c4, comandos = cartao(corpo, "Comandos Gier", 4)
-        externo.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(0, folga))
-        c4.pack_forget()                       # os botões ficam na linha do título
-        comandos.master.pack_configure(pady=(9, 9))
+        externo, c4, canto = cartao(corpo, "Comandos Gier", 4)
+        externo.grid(row=2, column=1, sticky="nsew", padx=(8, 0), pady=(0, folga))
+        self.estado_gier = tk.Label(canto, text="", bg=COR_CARTAO, font=(FONTE, 10, "bold"))
+        self.estado_gier.pack(side="right")
+        comandos = tk.Frame(c4, bg=COR_CARTAO)
+        comandos.pack(fill="x")
         Botao(comandos, "Baixar frequência", self.baixar_frequencia_gier, estilo="azul",
-              fonte=(FONTE, 10, "bold"), pad_y=5, pad_x=16).pack(side="right")
+              fonte=(FONTE, 10, "bold"), pad_y=5, pad_x=16).pack(side="left")
+        self.botao_gier = Botao(comandos, "Entrar no Gier", self._ao_clicar_gier, estilo="suave",
+                                fonte=(FONTE, 9, "bold"), pad_y=4, pad_x=12, raio=8)
+        self.botao_gier.pack(side="right")
+        self.usuario_gier = rotulo(comandos, "", fraco=True, tam=9)
+        self.usuario_gier.pack(side="right", padx=(0, 10))
+        self.mostrar_estado_gier()
 
         # Ação ---------------------------------------------------------------
         acao = tk.Frame(corpo, bg=COR_FUNDO)
@@ -2920,6 +2925,32 @@ class Aplicacao(tk.Tk):
             return
         JanelaGier(self, pai or self)
 
+    def _acertar_nome_tipo(self):
+        nome = NOME_TIPO[self.var_tipo.get()]
+        if self.var_nome_tipo.get() != nome:
+            self.var_nome_tipo.set(nome)
+
+    def mostrar_estado_gier(self):
+        """Quadro 4: conectado ou não, como no Frequência Inteligente."""
+        conectado = self.sessao_gier is not None and self.sessao_gier.conectado
+        self.estado_gier.configure(text="●  Conectado" if conectado else "Não conectado",
+                                   fg=COR_VERDE if conectado else COR_TEXTO_FRACO)
+        self.usuario_gier.configure(text=(self.cfg.get("gier_usuario") or "") if conectado
+                                    else "Entre para usar os comandos.")
+        self.botao_gier.definir_texto("Desconectar" if conectado else "Entrar no Gier")
+
+    def _ao_clicar_gier(self):
+        if getattr(self, "_janela_gier", None) is not None and self._janela_gier.winfo_exists():
+            self._janela_gier.lift()
+            return
+        if self.sessao_gier is not None and self.sessao_gier.conectado:
+            self.sessao_gier.sair()
+            self.sessao_gier = None
+            self.mostrar_estado_gier()
+            self.var_status.set("Desconectado do Gier.")
+        else:
+            JanelaGier(self, self, depois=lambda: None)
+
     def baixar_frequencia_gier(self):
         """Quadro 4: entra no Gier, se precisar, e abre a escolha de turmas e meses."""
         if getattr(self, "_janela_gier", None) is not None and self._janela_gier.winfo_exists():
@@ -3255,6 +3286,7 @@ class JanelaBaixarFrequencia(tk.Toplevel):
                     self.var_andamento.set(dado)
                 elif tipo == "sessao":
                     self.app.sessao_gier = None
+                    self.app.mostrar_estado_gier()
                     self.var_andamento.set("A conexão com o Gier expirou. Feche esta janela e clique em "
                                            "Baixar frequência de novo.")
                     self._ocupado = False
@@ -3400,6 +3432,7 @@ class JanelaGier(tk.Toplevel):
         if self.app.cfg.get("gier_usuario") != usuario:   # só o usuário fica lembrado, nunca a senha
             self.app.cfg["gier_usuario"] = usuario
             gravar_json(ARQ_CONFIG, self.app.cfg)
+        self.app.mostrar_estado_gier()
         if self.depois:
             self._terminou = True
             self._fechar()
@@ -3453,6 +3486,7 @@ class JanelaGier(tk.Toplevel):
                         return
                 elif tipo == "sessao":
                     self.app.sessao_gier = None
+                    self.app.mostrar_estado_gier()
                     self._mostrar_login("A conexão com o Gier expirou. Entre de novo.")
                 else:
                     self._terminar(tipo, dado)
