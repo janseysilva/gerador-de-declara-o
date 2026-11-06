@@ -39,8 +39,8 @@ DECLARAÇÕES ESCOLARES - como usar
    sobe sozinho. As declarações ficam em Documentos\Declarações Escolares\<ano>.
    O botão "Abrir pasta" mostra todas as declarações já geradas.
 
-   Frequência do Gier: clique em "Atualizar frequência do Gier" (na
-   Configuração ou no quadro 3, na declaração de Frequência). Abre uma janelinha
+   Frequência do Gier: clique em "Atualizar frequência" (no quadro 4)
+   ou em "Atualizar do Gier" (na Configuração). Abre uma janelinha
    no próprio programa: entre com o seu usuário e senha do Gier. Pronto: o
    programa busca sozinho todas as turmas e todos os meses. A senha não é
    gravada; o programa só lembra o usuário.

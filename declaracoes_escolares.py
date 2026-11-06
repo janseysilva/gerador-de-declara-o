@@ -33,7 +33,7 @@ import tkinter as tk
 import tkinter.font as tkfont
 from tkinter import ttk, filedialog, messagebox
 
-VERSAO_PROGRAMA = "2.10"
+VERSAO_PROGRAMA = "2.11"
 NOME_PROGRAMA = "Declarações Escolares"
 
 
@@ -2008,8 +2008,12 @@ class Aplicacao(tk.Tk):
         externo.grid(row=2, column=1, sticky="nsew", padx=(8, 0), pady=(0, folga))
         self.estado_gier = tk.Label(canto, text="", bg=COR_CARTAO, font=(FONTE, 10, "bold"))
         self.estado_gier.pack(side="right")
+        self.data_frequencia = rotulo(canto, "", fraco=True, tam=9)
+        self.data_frequencia.pack(side="right", padx=(0, 14))
         comandos = tk.Frame(c4, bg=COR_CARTAO)
         comandos.pack(fill="x")
+        Botao(comandos, "Atualizar frequência", self.atualizar_do_gier, estilo="azul",
+              fonte=(FONTE, 10, "bold"), pad_y=5, pad_x=16).pack(side="left", padx=(0, 8))
         Botao(comandos, "Baixar frequência", self.baixar_frequencia_gier, estilo="azul",
               fonte=(FONTE, 10, "bold"), pad_y=5, pad_x=16).pack(side="left")
         self.botao_gier = Botao(comandos, "Entrar no Gier", self._ao_clicar_gier, estilo="suave",
@@ -2018,6 +2022,7 @@ class Aplicacao(tk.Tk):
         self.usuario_gier = rotulo(comandos, "", fraco=True, tam=9)
         self.usuario_gier.pack(side="right", padx=(0, 10))
         self.mostrar_estado_gier()
+        self.mostrar_data_frequencia()
 
         # Ação ---------------------------------------------------------------
         acao = tk.Frame(corpo, bg=COR_FUNDO)
@@ -2056,8 +2061,6 @@ class Aplicacao(tk.Tk):
         campo(linha, "Frequência %", e["freq"], largura=10).pack(side="left", padx=(8, 0))
         self.aviso_freq = rotulo(f, "", fraco=True, tam=9, wraplength=440, justify="left")
         self.aviso_freq.pack(anchor="w", pady=(4, 0))
-        Botao(f, "Atualizar frequência do Gier", self.atualizar_do_gier, estilo="tracejado",
-              fonte=(FONTE, 9, "bold"), pad_x=14, pad_y=6).pack(anchor="w", pady=(6, 0))
         e["freq_periodo"].trace_add("write", lambda *_: self._ao_mudar_periodo())
         e["freq"].trace_add("write", lambda *_: self._mostrar_previa_freq())
         self.extras["frequencia"] = f
@@ -2323,8 +2326,8 @@ class Aplicacao(tk.Tk):
             self.ext["freq_periodo"].set("")
             self.ext["freq"].set("")
             self.aviso_freq.configure(text="Sem frequência do Gier para este aluno. Clique em "
-                                           "\"Atualizar frequência do Gier\" ou digite a %." if self.freq.get("meses") else
-                                      "Para preencher sozinho, clique em \"Atualizar frequência do Gier\". "
+                                           "\"Atualizar frequência\", no quadro 4, ou digite a %." if self.freq.get("meses") else
+                                      "Para preencher sozinho, clique em \"Atualizar frequência\", no quadro 4. "
                                       "Ou digite a %.")
 
     def _ao_mudar_periodo(self):
@@ -2906,6 +2909,7 @@ class Aplicacao(tk.Tk):
     # ----- Frequência: "Atualizar frequência do Gier" (busca sozinha, depois do login) -----
     def atualizar_frequencia_tela(self):
         """Frequência nova: refaz só a linha do quadro 2 e o % (sem apagar o que já foi digitado)."""
+        self.mostrar_data_frequencia()
         if self.aluno:
             self._preparar_frequencia(self.aluno)
             self._mostrar_aluno()
@@ -2929,6 +2933,15 @@ class Aplicacao(tk.Tk):
         nome = NOME_TIPO[self.var_tipo.get()]
         if self.var_nome_tipo.get() != nome:
             self.var_nome_tipo.set(nome)
+
+    def mostrar_data_frequencia(self):
+        """Quadro 4: de quando é a frequência guardada, que alimenta as porcentagens."""
+        try:
+            quando = datetime.fromisoformat(self.freq.get("atualizado_em") or "")
+            texto = "Porcentagens de {}".format(quando.strftime("%d/%m/%Y às %H:%M"))
+        except (ValueError, TypeError):
+            texto = "Porcentagens ainda não atualizadas"
+        self.data_frequencia.configure(text=texto)
 
     def mostrar_estado_gier(self):
         """Quadro 4: conectado ou não, como no Frequência Inteligente."""
@@ -3049,7 +3062,6 @@ class JanelaBaixarFrequencia(tk.Toplevel):
         self.fila = queue.Queue()
         self._parar = False
         self._ocupado = False
-        self._fechar_ao_terminar = False
         self.filtros = None
         self.vars_turmas, self.vars_meses = [], []
         self.pasta = os.path.join(app.cfg.get("pasta_saida") or os.path.join(pasta_documentos(), "Declarações Escolares"),
@@ -3266,13 +3278,12 @@ class JanelaBaixarFrequencia(tk.Toplevel):
         self.var_andamento.set(" ".join(partes))
         self.app.var_status.set("Frequência do Gier: {} PDF(s) salvos em {}.".format(len(salvos), self.pasta))
         self.app._registrar("Baixar frequência: {} PDF(s), {} problema(s)".format(len(salvos), len(problemas)))
-        if self._fechar_ao_terminar:
-            self._fechar()
-            return
         self._centralizar()
 
     def _olhar_fila(self):
         import queue
+        if not self.winfo_exists():            # fechada: o que ainda chegar é ignorado
+            return
         try:
             while True:
                 tipo, dado = self.fila.get_nowait()
@@ -3299,11 +3310,11 @@ class JanelaBaixarFrequencia(tk.Toplevel):
             self.after(150, self._olhar_fila)
 
     def _fechar_pedido(self):
-        if self._ocupado:                      # termina a turma atual e fecha
+        # Fecha na hora. O download para sozinho na próxima turma; o PDF da turma em
+        # andamento ainda pode ser salvo, porque ele não fica pela metade.
+        if self._ocupado:
             self._parar = True
-            self._fechar_ao_terminar = True
-            self.var_andamento.set("Cancelando... (termina a turma atual)")
-            return
+            self.app.var_status.set("Download cancelado. Os PDFs já baixados estão em {}.".format(self.pasta))
         self._fechar()
 
     def _fechar(self):
@@ -3421,10 +3432,6 @@ class JanelaGier(tk.Toplevel):
     def _depois_do_login(self, usuario, sessao, resposta):
         import gier_online
         self._ocupado = False
-        if self._parar:
-            self._terminou = True
-            self._fechar()
-            return
         if not resposta.get("ok"):
             self._mostrar_login(gier_online.mensagem_do_erro(resposta))
             return
@@ -3474,6 +3481,8 @@ class JanelaGier(tk.Toplevel):
 
     def _olhar_fila(self):
         import queue
+        if self._terminou:                     # fechada: o que ainda chegar é ignorado
+            return
         try:
             while True:
                 tipo, dado = self.fila.get_nowait()
@@ -3538,14 +3547,14 @@ class JanelaGier(tk.Toplevel):
     def _cancelar(self):
         if self._terminou:
             return
+        # Fecha na hora. A busca em segundo plano para sozinha na próxima turma, sem usar a janela,
+        # e o que ela ainda entregar é ignorado.
+        busca = self.tela_busca.winfo_ismapped()
         self._parar = True
-        if self.tela_login.winfo_ismapped():
-            if not self._ocupado:             # ainda não entrou: fecha na hora
-                self._terminou = True
-                self._fechar()
-            return
-        self.var.set("Cancelando... (termina a turma atual)")
-        self.botao.definir_ativo(False)
+        self._terminou = True
+        self._fechar()
+        if busca:
+            self.app.var_status.set("Atualização da frequência cancelada.")
 
     def _fechar(self):
         try:
