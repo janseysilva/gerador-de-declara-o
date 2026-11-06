@@ -40,9 +40,10 @@ DECLARAÇÕES ESCOLARES - como usar
    O botão "Abrir pasta" mostra todas as declarações já geradas.
 
    Frequência do Gier: clique em "Atualizar frequência do Gier" (na
-   Configuração ou no quadro 3, na declaração de Frequência). Abre uma janela
-   do Chrome (ou do Edge) no Gier: entre com o seu usuário e senha. Pronto: o
-   programa busca sozinho todas as turmas e todos os meses e fecha a janela.
+   Configuração ou no quadro 3, na declaração de Frequência). Abre uma janelinha
+   no próprio programa: entre com o seu usuário e senha do Gier. Pronto: o
+   programa busca sozinho todas as turmas e todos os meses. A senha não é
+   gravada; o programa só lembra o usuário.
    Uma janelinha no canto mostra o andamento (botão Cancelar). O programa não
    vê nem guarda a senha. Se já tiver um PDF "Acompanhamento Diário", use
    "Abrir PDF...".

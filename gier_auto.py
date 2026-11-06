@@ -1,491 +1,197 @@
+# -*- coding: utf-8 -*-
 """
-Busca a frequência no Gier sozinha (botão "Atualizar frequência do Gier").
+Busca a frequência no Gier por dentro do programa, sem abrir navegador.
 
-Como funciona:
-  1. Abre o Chrome (ou o Edge, se não houver Chrome) numa janela só do programa,
-     já na página do relatório "Acompanhamento Diário" (relatório 348).
-  2. A pessoa entra com usuário e senha. O programa não vê nem guarda a senha:
-     só espera a página do relatório aparecer.
-  3. De dentro da página já logada, faz as mesmas chamadas que a própria página
-     do Gier faz (veja RelatorioFiltro.js e relatorio-imprimir.js do Gier):
-       POST /Relatorio/RelatorioFiltro/PesquisarOpcoes  -> etapas, turmas...
-       GET  /relatorio/verificar-processamento          -> se vai para a fila
-       POST /relatorio/imprimir                         -> o PDF
-     e devolve o PDF de cada turma, com todos os meses.
+A conversa com o site fica em gier_online.py; aqui está a regra do programa: um PDF por
+turma, com todos os meses, sempre no componente da frequência diária.
 
-O navegador é controlado pelo "DevTools Protocol" (o mesmo que os testes de
-site usam), com a pasta de perfil própria do programa: o login pode ficar
-lembrado de uma vez para a outra.
+O Gier lista o componente como "EDUCAÇÃO INFANTIL", e o PDF sai com "AULA DIA" no
+cabeçalho. "EDUCAÇÃO FÍSICA" vem primeiro na lista, mas volta sem dias letivos: é sempre
+ignorada (pedido do Jansey). Um PDF só é aceito se alguma criança tiver dias letivos.
 """
-import base64
-import json
+
 import os
-import socket
-import subprocess
-import sys
 import time
-import urllib.request
 
-GIER_BASE = os.environ.get("GIER_BASE", "https://app-manaus-mvc-prd-frontend-001.azurewebsites.net")
-ID_RELATORIO = "348"
+import gier_online
+from gier_online import ErroGier
+
+
+TENTATIVAS = 3                  # o Gier às vezes responde 502 e dá certo logo depois
+PAUSA_ENTRE_TENTATIVAS = 3      # segundos
+ERROS_PASSAGEIROS = ("conexao", "site", "nao_pdf", "pdf_incompleto")
 
 
 class Cancelado(Exception):
     pass
 
 
-class ErroGier(Exception):
-    pass
+def _sem_acento(texto):
+    return gier_online._simples(texto)
 
 
-def url_relatorio():
-    return GIER_BASE.rstrip("/") + "/Relatorio/RelatorioFiltro/" + ID_RELATORIO
-
-
-# ---------------------------------------------------------------------------
-# Achar o navegador
-# ---------------------------------------------------------------------------
-
-def _caminhos_registro(exe):
-    if not sys.platform.startswith("win"):
-        return []
-    caminhos = []
-    try:
-        import winreg
-        chave = r"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths" + "\\" + exe
-        for raiz in (winreg.HKEY_CURRENT_USER, winreg.HKEY_LOCAL_MACHINE):
-            try:
-                with winreg.OpenKey(raiz, chave) as k:
-                    caminhos.append(winreg.QueryValue(k, None))
-            except OSError:
-                pass
-    except Exception:
-        pass
-    return caminhos
-
-
-def achar_navegador():
-    """(nome, caminho) do Chrome ou, se não houver, do Edge. None se não achar."""
-    if os.environ.get("GIER_NAVEGADOR"):
-        return "Navegador", os.environ["GIER_NAVEGADOR"]
-    pf = os.environ.get("ProgramFiles", r"C:\Program Files")
-    pf86 = os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")
-    local = os.environ.get("LOCALAPPDATA", "")
-    chrome = _caminhos_registro("chrome.exe") + [
-        os.path.join(pf, r"Google\Chrome\Application\chrome.exe"),
-        os.path.join(pf86, r"Google\Chrome\Application\chrome.exe"),
-        os.path.join(local, r"Google\Chrome\Application\chrome.exe"),
-    ]
-    edge = _caminhos_registro("msedge.exe") + [
-        os.path.join(pf86, r"Microsoft\Edge\Application\msedge.exe"),
-        os.path.join(pf, r"Microsoft\Edge\Application\msedge.exe"),
-    ]
-    for nome, lista in (("Chrome", chrome), ("Edge", edge)):
-        for caminho in lista:
-            if caminho and os.path.isfile(caminho):
-                return nome, caminho
-    return None
-
-
-# ---------------------------------------------------------------------------
-# Conversa com o navegador (DevTools Protocol)
-# ---------------------------------------------------------------------------
-
-def _porta_livre():
-    with socket.socket() as s:
-        s.bind(("127.0.0.1", 0))
-        return s.getsockname()[1]
-
-
-class Navegador:
-    def __init__(self, caminho_exe, pasta_perfil, url):
-        os.makedirs(pasta_perfil, exist_ok=True)
-        self.porta = _porta_livre()
-        args = [caminho_exe,
-                "--remote-debugging-port={}".format(self.porta),
-                "--remote-allow-origins=*",
-                "--user-data-dir={}".format(pasta_perfil),
-                "--no-first-run", "--no-default-browser-check",
-                "--disable-features=Translate",
-                "--new-window", url]
-        if os.environ.get("GIER_NAVEGADOR_EXTRA"):          # usado nos testes (Linux)
-            args[1:1] = os.environ["GIER_NAVEGADOR_EXTRA"].split()
-        criar = 0x08000000 if sys.platform.startswith("win") else 0   # CREATE_NO_WINDOW
-        self.processo = subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                                         creationflags=criar)
-        self._ws = None
-        self._ws_url = None
-        self._id = 0
-        fim = time.time() + 30
-        while time.time() < fim:
-            try:
-                self._json("/json/version")
-                return
-            except Exception:
-                if self.processo.poll() is not None:
-                    raise ErroGier("O navegador fechou logo ao abrir.")
-                time.sleep(0.3)
-        raise ErroGier("O navegador não respondeu.")
-
-    def _json(self, caminho):
-        with urllib.request.urlopen("http://127.0.0.1:{}{}".format(self.porta, caminho), timeout=5) as r:
-            return json.loads(r.read().decode("utf-8"))
-
-    def abas(self):
+def _com_tentativas(funcao, rotulo, registrar):
+    for tentativa in range(1, TENTATIVAS + 1):
         try:
-            return [t for t in self._json("/json/list") if t.get("type") == "page"]
-        except Exception:
-            if self.processo.poll() is not None:
-                raise Cancelado("A janela do navegador foi fechada.")
-            return []
+            return funcao()
+        except ErroGier as erro:
+            if erro.codigo not in ERROS_PASSAGEIROS or tentativa == TENTATIVAS:
+                raise
+            registrar("{}: {} (tentativa {})".format(rotulo, gier_online.texto_do_erro(erro), tentativa))
+            time.sleep(PAUSA_ENTRE_TENTATIVAS)
 
-    def fechado(self):
-        return self.processo.poll() is not None
 
-    def usar_aba(self, aba):
-        import websocket
-        url = aba["webSocketDebuggerUrl"]
-        if url == self._ws_url and self._ws is not None:
-            return
-        self._fechar_ws()
-        self._ws = websocket.create_connection(url, timeout=10, suppress_origin=True)
-        self._ws_url = url
+def listar_turmas(filtros, registrar):
+    """Todas as turmas da escola: [{"id", "descricao", "etapa"}]."""
+    for parametro in ("IdModalidade", "IdTurma", "IdTipoComponente", "IdDisciplina"):
+        filtros.definir(parametro, "")
+    etapas = _com_tentativas(lambda: filtros.opcoes("Etapa/Modalidade"), "lista de etapas", registrar)
+    turmas = []
+    for etapa in etapas:
+        filtros.definir("IdModalidade", etapa["id"])
+        filtros.definir("IdTurma", "")
+        lista = _com_tentativas(lambda: filtros.opcoes("Turma"), "lista de turmas", registrar)
+        turmas.extend({"id": t["id"], "descricao": t["descricao"], "etapa": etapa["id"]} for t in lista)
+    return turmas
 
-    def _fechar_ws(self):
-        if self._ws is not None:
-            try:
-                self._ws.close()
-            except Exception:
-                pass
-        self._ws = None
-        self._ws_url = None
 
-    def comando(self, metodo, params=None, espera=30):
-        import websocket
-        self._id += 1
-        meu = self._id
-        self._ws.send(json.dumps({"id": meu, "method": metodo, "params": params or {}}))
-        fim = time.time() + espera
-        while True:
-            restante = fim - time.time()
-            if restante <= 0:
-                raise ErroGier("O Gier demorou demais para responder.")
-            self._ws.settimeout(min(restante, 5))
-            try:
-                msg = json.loads(self._ws.recv())
-            except websocket.WebSocketTimeoutException:
+def componentes_da_turma(filtros, turma):
+    """Componentes da turma, sem Educação Física, com a frequência diária primeiro."""
+    filtros.definir("IdModalidade", turma["etapa"])
+    filtros.definir("IdTurma", turma["id"])
+    filtros.definir("IdTipoComponente", "")
+    filtros.definir("IdDisciplina", "")
+    vistos, lista = set(), []
+    for tipo in filtros.opcoes("TIPO DE FREQUENCIA"):
+        filtros.definir("IdTipoComponente", tipo["id"])
+        for item in filtros.opcoes("Componente Curricular"):
+            if item["id"] in vistos or "EDUCACAO FISICA" in _sem_acento(item["descricao"]):
                 continue
-            except Exception:
-                self._fechar_ws()
-                if self.fechado():
-                    raise Cancelado("A janela do navegador foi fechada.")
-                raise ErroGier("Perdi a conexão com a página do Gier.")
-            if msg.get("id") == meu:
-                if "error" in msg:
-                    raise ErroGier(msg["error"].get("message", "erro do navegador"))
-                return msg.get("result", {})
+            vistos.add(item["id"])
+            lista.append(item)
 
-    def avaliar(self, expressao, espera=30):
-        r = self.comando("Runtime.evaluate", {"expression": expressao, "awaitPromise": True,
-                                              "returnByValue": True}, espera=espera)
-        if r.get("exceptionDetails"):
-            det = r["exceptionDetails"]
-            texto = (det.get("exception") or {}).get("description") or det.get("text") or "erro"
-            raise ErroGier("Erro na página do Gier: " + texto.splitlines()[0])
-        return (r.get("result") or {}).get("value")
-
-    def ir_para(self, url):
-        self.comando("Page.navigate", {"url": url})
-
-    def fechar(self):
-        try:
-            if self._ws is not None:
-                self.comando("Browser.close", espera=5)
-        except Exception:
-            pass
-        self._fechar_ws()
-        try:
-            self.processo.wait(timeout=5)
-        except Exception:
-            try:
-                self.processo.terminate()
-            except Exception:
-                pass
+    def nota(item):
+        nome = _sem_acento(item["descricao"])
+        return 0 if "AULA DIA" in nome else 1 if "EDUCACAO INFANTIL" in nome else 2
+    return sorted(lista, key=nota)
 
 
-# ---------------------------------------------------------------------------
-# O que roda dentro da página do Gier (mesmas chamadas da página)
-# ---------------------------------------------------------------------------
-
-JS_ESTADO = r"""(() => {
-  const r = document.getElementById('IdRelatorio');
-  const p = document.getElementById('hdfIPessoa');
-  // elementos do topo do Gier que só aparecem depois do login
-  const logado = !!(document.getElementById('spanRelatoriosNaoLidos') ||
-                    document.getElementById('pesquisarNavegacaoGeral') ||
-                    (p && p.value && p.value !== '0'));
-  const senha = !!document.querySelector('input[type=password]');
-  return {rel: r ? r.value : null, pessoa: p ? p.value : null, logado: logado, senha: senha,
-          origem: location.origin, caminho: location.pathname, pronto: document.readyState,
-          titulo: (document.title || '').slice(0, 80)};
-})()"""
-
-JS_FUNCOES = r"""
-window.__decl = window.__decl || {};
-__decl.base = function (sobrescrever) {
-  const lista = [];
-  const usados = new Set();
-  document.querySelectorAll('[data-parametro]').forEach(h => {
-    const p = h.dataset.parametro;
-    let v = (p in sobrescrever) ? String(sobrescrever[p]) : (h.value || '');
-    usados.add(p);
-    v.split(',').forEach(x => lista.push({Parametro: p, Valor: x}));
-  });
-  Object.keys(sobrescrever).forEach(p => {
-    if (!usados.has(p)) lista.push({Parametro: p, Valor: String(sobrescrever[p])});
-  });
-  return lista;
-};
-__decl.opcoes = async function (elemento, sobrescrever) {
-  const r = await fetch('/Relatorio/RelatorioFiltro/PesquisarOpcoes', {
-    method: 'POST', headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({Elemento: elemento, Filtros: __decl.base(sobrescrever)})
-  });
-  if (!r.ok) throw new Error('PesquisarOpcoes ' + elemento + ': ' + r.status);
-  return await r.json();
-};
-__decl.valor = function (param, padrao) {
-  const h = document.querySelector('[data-parametro="' + param + '"][data-id]') ||
-            document.querySelector('[data-parametro="' + param + '"]');
-  return (h && h.value) ? h.value : padrao;
-};
-__decl.sem = function (t) {
-  return String(t || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase();
-};
-__decl.ordenar = function (lista, preferidos) {
-  const nota = o => { const d = __decl.sem(o.descricao); const i = preferidos.findIndex(p => d.includes(p));
-                      return i < 0 ? preferidos.length : i; };
-  return (lista || []).slice().sort((a, b) => nota(a) - nota(b));
-};
-true
-"""
-
-JS_TURMAS = r"""(async () => {
-  const ano = __decl.valor('AnoLetivo', String(new Date().getFullYear()));
-  const escola = __decl.valor('IdEscola', (document.getElementById('IdEscola') || {}).value || '');
-  const fixos = {AnoLetivo: ano, IdEscola: escola};
-  const etapas = await __decl.opcoes('Etapa/Modalidade', fixos);
-  const turmas = [];
-  for (const e of etapas) {
-    const ts = await __decl.opcoes('Turma', Object.assign({}, fixos, {IdModalidade: e.id}));
-    ts.forEach(t => turmas.push({etapa: e.id, etapa_nome: e.descricao, id: t.id, nome: t.descricao}));
-  }
-  return {ano: ano, escola: escola, turmas: turmas};
-})()"""
-
-# O Gier lista o componente como "EDUCAÇÃO INFANTIL", e o PDF sai com "AULA DIA" no cabeçalho.
-# "EDUCAÇÃO FÍSICA" vem primeiro na lista, mas volta sem dias letivos: é sempre ignorada (pedido do Jansey).
-JS_CANDIDATOS = r"""(async (args) => {
-  const fixos = {AnoLetivo: args.ano, IdEscola: args.escola, IdModalidade: args.etapa, IdTurma: args.turma};
-  const tipos = __decl.ordenar(await __decl.opcoes('TIPO DE FREQUENCIA', fixos), ['DIARI', 'DIA', 'GERAL']);
-  if (!tipos.length) return {erro: 'o Gier não mostrou o tipo de frequência'};
-  const nota = d => { const n = __decl.sem(d);
-    return n.includes('AULA DIA') ? 0 : n.includes('EDUCACAO INFANTIL') ? 1 : 2; };
-  const vistos = new Set(), lista = [];
-  for (const t of tipos) {
-    const discs = await __decl.opcoes('Componente Curricular', Object.assign({}, fixos, {IdTipoComponente: t.id}));
-    for (const d of (discs || [])) {
-      if (vistos.has(d.id) || __decl.sem(d.descricao).includes('EDUCACAO FISICA')) continue;
-      vistos.add(d.id);
-      lista.push({id: d.id, disciplina: d.descricao, tipo: t.descricao});
-    }
-  }
-  if (!lista.length) return {erro: 'o Gier não mostrou o componente curricular'};
-  lista.sort((a, b) => nota(a.disciplina) - nota(b.disciplina));
-  return {candidatos: lista};
-})(%s)"""
-
-JS_PDF = r"""(async (args) => {
-  const v = await fetch('/relatorio/verificar-processamento?idRelatorio=348');
-  let fila = false;
-  if (v.ok) { try { fila = (await v.json()).processaJob === true; } catch (e) {} }
-  if (fila) return {fila: true};
-
-  const p = [
-    {Descricao: 'AnoLetivo', Valor: String(args.ano)},
-    {Descricao: 'IdTurma', Valor: String(args.turma)},
-    {Descricao: 'IdDisciplina', Valor: String(args.disc)},
-    {Descricao: 'Mes', Valor: '-1'},
-    {Descricao: 'CompensacaoFalta', Valor: '1'},
-    {Descricao: 'DataReferencia', Valor: new Date().toISOString().split('T')[0]},
-    {Descricao: 'IdEstrutura', Valor: document.getElementById('hdfIdEstrutura').value},
-    {Descricao: 'IdUsuario', Valor: document.getElementById('hdfIPessoa').value},
-  ];
-  p.push({Descricao: 'nomeusuario', Valor: (document.getElementById('hdfNomeUsuario') || {}).value || ''});
-  p.push({Descricao: 'urlorigem', Valor: window.location.origin.toLowerCase() + ' '});
-  const r = await fetch('/relatorio/imprimir', {
-    method: 'POST', headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({id: '348', nome: 'Relatório GIER', parametros: p, tipo: '0'})
-  });
-  if (!r.ok) return {erro: 'imprimir: ' + r.status, status: r.status};
-  const bytes = new Uint8Array(await r.arrayBuffer());
-  let bin = '';
-  for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
-  return {pdf: btoa(bin)};
-})(%s)"""
+def _so_letras(texto):
+    return "".join(c for c in _sem_acento(texto) if c.isalnum())
 
 
-def _tem_dias_letivos(caminho):
-    """O PDF só serve se ao menos uma criança tem dias letivos."""
+def _conferir_pdf(caminho, turma, nomes_meses):
+    """Lê o PDF recebido. Sem aluno, de outra turma ou com mês não pedido é erro.
+    Devolve True se alguma criança tem dias letivos."""
     import frequencia_gier as fg
     alunos, _info = fg.extrair_dados_pdf(caminho)
+    if not alunos:
+        raise ErroGier("sem_alunos")
+    for aluno in alunos:
+        veio = aluno.get("turma") or ""
+        if _so_letras(veio) != _so_letras(turma["descricao"]):
+            raise ErroGier("outra_turma", "veio {}".format(veio))
+        if nomes_meses and _sem_acento(aluno.get("mes") or "") not in nomes_meses:
+            raise ErroGier("outro_mes", "veio {}".format(aluno.get("mes")))
     return any(a.get("dias_letivos") for a in alunos)
 
 
-# ---------------------------------------------------------------------------
-# O passo a passo inteiro (roda numa thread; avisa o andamento por `avisar`)
-# ---------------------------------------------------------------------------
-
-def buscar_frequencia(pasta_perfil, pasta_pdfs, avisar, cancelado, minutos_login=10, registrar=None):
+def baixar_pdf_da_turma(filtros, turma, meses, caminho, registrar, nomes_meses=None):
     """
-    Devolve (lista de caminhos de PDF, lista de problemas).
-    avisar(texto) mostra o andamento; cancelado() -> True para parar;
-    registrar(texto) anota detalhes no log (endereços das páginas, sem senha).
+    Grava em `caminho` o PDF da turma nos meses pedidos (["-1"] = todos).
+    Devolve (motivo, sem_dias): motivo "" se deu certo; sem_dias True se o PDF é válido,
+    mas nenhum dos meses teve aula, como janeiro. `nomes_meses`: para conferir o que veio.
+    """
+    rotulo = turma["descricao"]
+    pedidos = {_sem_acento(n) for n in nomes_meses} if nomes_meses else None
+    componentes = _com_tentativas(lambda: componentes_da_turma(filtros, turma),
+                                  rotulo + " | lista de componentes", registrar)
+    if not componentes:
+        return "o Gier não mostrou o componente curricular", False
+    motivo = "o Gier não trouxe a frequência desta turma"
+    parcial, reserva = caminho + ".parcial", None
+    try:
+        for componente in componentes:
+            try:
+                dados = _com_tentativas(
+                    lambda: gier_online.baixar_ficha(filtros, turma, None, componente, meses),
+                    "{} | {}".format(rotulo, componente["descricao"]), registrar)
+                with open(parcial, "wb") as arquivo:
+                    arquivo.write(dados)
+                com_dias = _conferir_pdf(parcial, turma, pedidos)
+            except ErroGier as erro:
+                if erro.codigo in ("sessao_expirada", "fila"):
+                    raise
+                motivo = gier_online.texto_do_erro(erro)
+                continue
+            except OSError as erro:
+                raise ErroGier("gravar", type(erro).__name__) from None
+            if com_dias:
+                os.replace(parcial, caminho)
+                registrar("{} | componente: {}".format(rotulo, componente["descricao"]))
+                return "", False
+            registrar("{} | {}: veio sem dias letivos".format(rotulo, componente["descricao"]))
+            reserva = reserva or dados
+        if reserva is not None:                 # mês sem aula: o PDF existe, só não tem dias
+            with open(caminho, "wb") as arquivo:
+                arquivo.write(reserva)
+            return "", True
+        return motivo, False
+    finally:
+        if os.path.exists(parcial):
+            os.remove(parcial)
+
+
+def _baixar_turma(filtros, turma, caminho, registrar):
+    """Para a frequência das declarações: um PDF sem nenhum dia letivo não serve."""
+    motivo, sem_dias = baixar_pdf_da_turma(filtros, turma, ["-1"], caminho, registrar)
+    if sem_dias:
+        os.remove(caminho)
+        return "o Gier não trouxe dias letivos para esta turma"
+    return motivo
+
+
+def preparar_relatorio(sessao, registrar):
+    """Abre o site do relatório com a sessão conectada e devolve os filtros."""
+    resposta = sessao.entrar_relatorio()
+    if not resposta.get("ok"):
+        raise ErroGier(resposta.get("erro") or "site", resposta.get("detalhe") or "")
+    filtros = _com_tentativas(lambda: gier_online.carregar_filtros(sessao), "página do relatório", registrar)
+    filtros.definir("CompensacaoFalta", "1")
+    return filtros
+
+
+def buscar_frequencia(sessao, pasta_pdfs, avisar, cancelado, registrar=None):
+    """
+    Com a sessão já conectada, baixa um PDF por turma. Devolve (caminhos, problemas).
+    avisar(texto) mostra o andamento; cancelado() -> True para parar.
+    Sessão vencida ou acesso recusado saem como ErroGier.
     """
     registrar = registrar or (lambda texto: None)
-    nav_info = achar_navegador()
-    if not nav_info:
-        raise ErroGier("Não achei o Google Chrome nem o Microsoft Edge neste computador.")
-    nome_nav, exe = nav_info
-    avisar("Abrindo o {}...".format(nome_nav))
-    nav = Navegador(exe, pasta_perfil, url_relatorio())
-    try:
-        # 1. Espera o login (a pessoa digita usuário e senha na janela)
-        avisar("Entre com o seu usuário e senha do Gier na janela do {}.".format(nome_nav))
-        fim = time.time() + minutos_login * 60
-        aba_ok = None
-        ultimo_ir = 0
-        visto = {}
-        avisou_entrou = False
-        avisou_dica = False
-        inicio = time.time()
-        while aba_ok is None:
-            if cancelado():
-                raise Cancelado("Cancelado.")
-            if time.time() > fim:
-                raise ErroGier("Passaram {} minutos sem chegar ao relatório do Gier.".format(minutos_login))
-            abas = nav.abas()
-            for aba in abas:
-                url = aba.get("url", "")
-                if not url.lower().startswith(("http://", "https://")):
-                    continue
-                try:
-                    nav.usar_aba(aba)
-                    estado = nav.avaliar(JS_ESTADO, espera=10) or {}
-                except ErroGier as erro:
-                    chave = (aba.get("id"), "erro", str(erro))
-                    if visto.get(aba.get("id")) != chave:
-                        visto[aba.get("id")] = chave
-                        registrar("aba {}: não consegui ler ({})".format(url.split("?")[0], erro))
-                    continue
-                chave = (aba.get("id"), estado.get("origem"), estado.get("caminho"), estado.get("rel"),
-                         estado.get("logado"), estado.get("senha"), estado.get("pronto"))
-                if visto.get(aba.get("id")) != chave:
-                    visto[aba.get("id")] = chave
-                    registrar("página: {}{} | título: {} | relatório: {} | logado: {} | campo de senha: {} | {}".format(
-                        estado.get("origem"), estado.get("caminho"), estado.get("titulo"), estado.get("rel"),
-                        estado.get("logado"), estado.get("senha"), estado.get("pronto")))
-                # a página do relatório já tem tudo que precisamos quando o HTML terminou de ler
-                # (não espera o widget de Libras e outras coisas de fora carregarem)
-                if estado.get("rel") == ID_RELATORIO and estado.get("pronto") in ("interactive", "complete"):
-                    aba_ok = aba
-                    break
-                # já entrou, mas está em outra página do Gier: vai para o relatório
-                if estado.get("logado") and not estado.get("senha") and time.time() - ultimo_ir > 8:
-                    if not avisou_entrou:
-                        avisar("Entrou no Gier. Abrindo o relatório de frequência...")
-                        avisou_entrou = True
-                    destino = (estado.get("origem") or GIER_BASE).rstrip("/") + "/Relatorio/RelatorioFiltro/" + ID_RELATORIO
-                    registrar("indo para " + destino)
-                    nav.ir_para(destino)
-                    ultimo_ir = time.time()
-            if aba_ok is None:
-                if not avisou_entrou and not avisou_dica and time.time() - inicio > 90:
-                    avisar("Se você já entrou no Gier, abra no {} o relatório \"Relatório de Frequência "
-                           "Diária\" (Acompanhamento Diário). O programa continua sozinho a partir dele.".format(nome_nav))
-                    avisou_dica = True
-                time.sleep(1.5)
+    avisar("Abrindo o relatório de frequência...")
+    filtros = preparar_relatorio(sessao, registrar)
 
-        # 2. Lista as turmas
-        avisar("Entrou no Gier. Procurando as turmas...")
-        nav.avaliar(JS_FUNCOES)
-        dados = nav.avaliar(JS_TURMAS, espera=60) or {}
-        turmas = dados.get("turmas") or []
-        if not turmas:
-            raise ErroGier("O Gier não mostrou nenhuma turma para esta escola.")
+    avisar("Procurando as turmas...")
+    turmas = listar_turmas(filtros, registrar)
+    if not turmas:
+        raise ErroGier("sem_turmas")
 
-        # 3. Um PDF por turma, com todos os meses
-        os.makedirs(pasta_pdfs, exist_ok=True)
-        caminhos, problemas = [], []
-        for n, t in enumerate(turmas, 1):
-            if cancelado():
-                raise Cancelado("Cancelado.")
-            avisar("Baixando a frequência: turma {} de {} ({})".format(n, len(turmas), t["nome"]))
-            args = {"ano": dados["ano"], "escola": dados["escola"], "etapa": t["etapa"], "turma": t["id"]}
-            opcoes = {}
-            for tentativa in range(3):              # o Gier às vezes responde 502 e dá certo logo depois
-                try:
-                    nav.avaliar(JS_FUNCOES)
-                    opcoes = nav.avaliar(JS_CANDIDATOS % json.dumps(args), espera=60) or {}
-                    break
-                except ErroGier as erro:
-                    opcoes = {"erro": str(erro)}
-                    registrar("{} | lista de componentes: {} (tentativa {})".format(t["nome"], erro, tentativa + 1))
-                    if tentativa < 2:
-                        time.sleep(3)
-            if not opcoes.get("candidatos"):
-                problemas.append("{}: {}".format(t["nome"], opcoes.get("erro") or "sem componente curricular"))
-                continue
-            nome_arq = "".join(c if c.isalnum() else "_" for c in t["nome"]).strip("_") or "turma"
-            caminho = os.path.join(pasta_pdfs, "{:02d}_{}.pdf".format(n, nome_arq))
-            motivo = "o Gier não trouxe dias letivos para esta turma"
-            achou = fila = False
-            for cand in opcoes["candidatos"]:
-                r = {}
-                for tentativa in range(3):          # o Gier às vezes responde 502 e dá certo logo depois
-                    try:
-                        nav.avaliar(JS_FUNCOES)
-                        r = nav.avaliar(JS_PDF % json.dumps(dict(args, disc=cand["id"])), espera=240) or {}
-                    except ErroGier as erro:
-                        r = {"erro": str(erro), "status": 500}
-                    if r.get("pdf") or r.get("fila") or (r.get("status") or 0) < 500:
-                        break
-                    registrar("{} | {}: {} (tentativa {})".format(t["nome"], cand["disciplina"], r.get("erro"), tentativa + 1))
-                    if tentativa < 2:
-                        time.sleep(3)
-                if r.get("fila"):
-                    fila = True
-                    break
-                if not r.get("pdf"):
-                    motivo = r.get("erro") or "sem PDF"
-                    continue
-                dados_pdf = base64.b64decode(r["pdf"])
-                if not dados_pdf.startswith(b"%PDF"):
-                    motivo = "o Gier não devolveu um PDF"
-                    continue
-                with open(caminho, "wb") as f:
-                    f.write(dados_pdf)
-                if _tem_dias_letivos(caminho):
-                    registrar("{} | componente: {} | tipo: {}".format(t["nome"], cand["disciplina"], cand["tipo"]))
-                    caminhos.append(caminho)
-                    achou = True
-                    break
-                registrar("{} | {}: veio sem dias letivos".format(t["nome"], cand["disciplina"]))
-                os.remove(caminho)
-            if fila:
-                problemas.append("{}: o Gier mandou o relatório para a fila de processamento".format(t["nome"]))
-            elif not achou:
-                problemas.append("{}: {}".format(t["nome"], motivo))
-        return caminhos, problemas
-    finally:
-        nav.fechar()
+    os.makedirs(pasta_pdfs, exist_ok=True)
+    caminhos, problemas = [], []
+    for n, turma in enumerate(turmas, 1):
+        if cancelado():
+            raise Cancelado("Cancelado.")
+        avisar("Baixando a frequência: turma {} de {} ({})".format(n, len(turmas), turma["descricao"]))
+        nome = "".join(c if c.isalnum() else "_" for c in turma["descricao"]).strip("_") or "turma"
+        caminho = os.path.join(pasta_pdfs, "{:02d}_{}.pdf".format(n, nome))
+        try:
+            motivo = _baixar_turma(filtros, turma, caminho, registrar)
+        except ErroGier as erro:
+            if erro.codigo == "sessao_expirada":
+                raise
+            motivo = gier_online.texto_do_erro(erro)
+        if motivo:
+            problemas.append("{}: {}".format(turma["descricao"], motivo))
+        else:
+            caminhos.append(caminho)
+    return caminhos, problemas
