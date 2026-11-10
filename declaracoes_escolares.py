@@ -33,7 +33,10 @@ import tkinter as tk
 import tkinter.font as tkfont
 from tkinter import ttk, filedialog, messagebox
 
-VERSAO_PROGRAMA = "2.11"
+import estoque
+import tela_estoque
+
+VERSAO_PROGRAMA = "2.12"
 NOME_PROGRAMA = "Declarações Escolares"
 
 
@@ -134,6 +137,7 @@ CONFIG_PADRAO = {
     "pdf": True,
     "word": False,
     "pasta_saida": "",
+    "pasta_estoque": "",      # vazio = pasta do programa; os dois PCs usam a mesma para ver o mesmo estoque
 }
 
 
@@ -1384,6 +1388,13 @@ ALTURA_CABECALHO = 92
 FONTE = "Arial"             # escolhida pelo Jansey (letra das imagens de revisão)
 AUMENTO_LETRA = 1.2         # letras 20% maiores que o padrão do Windows
 
+# Frase abaixo do nome do programa, na faixa azul, para cada aba
+SUBTITULO_ABA = {
+    "declaracoes": "Pesquise o aluno pelo nome e gere a declaração pronta para imprimir.",
+    "pedagogico": "Estoque de material pedagógico: entrada, saída e relatório.",
+    "limpeza": "Estoque de material de limpeza: entrada, saída e relatório.",
+}
+
 
 def _misturar(cor_a, cor_b, t):
     a = [int(cor_a[i:i + 2], 16) for i in (1, 3, 5)]
@@ -1814,6 +1825,10 @@ class Aplicacao(tk.Tk):
         self.ext["resultado"].set("Aprovado(a)")
         self.ext["motivo"].set("atendimento na escola")
 
+        self.livros = {}                  # estoques (material pedagógico e de limpeza)
+        self.paineis = {}                 # telas dos estoques, criadas na primeira vez que a aba abre
+        self._abrir_livros()
+
         configurar_estilo(self)
         self._montar_interface()
         self.var_busca.trace_add("write", lambda *_: self._atualizar_dica())
@@ -1870,8 +1885,8 @@ class Aplicacao(tk.Tk):
         x_texto = 84 if baixa else 98
         cab.create_text(x_texto, 24 if baixa else 35, anchor="w", text=NOME_PROGRAMA, fill="white",
                         font=(FONTE, 16 if baixa else 20, "bold"))
-        cab.create_text(x_texto, 48 if baixa else 63, anchor="w", fill="#D5E1F7", font=(FONTE, 9),
-                        text="Pesquise o aluno pelo nome e gere a declaração pronta para imprimir.")
+        self._id_sub = cab.create_text(x_texto, 48 if baixa else 63, anchor="w", fill="#D5E1F7", font=(FONTE, 9),
+                                       text=SUBTITULO_ABA["declaracoes"])
         y1, y2, y3 = (15, 33, 51) if baixa else (28, 47, 66)
         self._id_escola = cab.create_text(0, y1, anchor="e", text="", fill="white", font=(FONTE, 9, "bold"))
         self._id_data = cab.create_text(0, y2, anchor="e", text="", fill="#D5E1F7", font=(FONTE, 9))
@@ -1899,8 +1914,58 @@ class Aplicacao(tk.Tk):
         self.cabecalho.itemconfigure(self._id_data, text="{}, {}".format(DIAS[agora.weekday()], hoje_extenso(agora)))
         self.after(60000, self._atualizar_relogio)
 
+    # -- abas: Declarações | Estoque pedagógico | Estoque de limpeza ---------------------------
+
+    def _abrir_livros(self):
+        """Abre os dois estoques (na pasta do programa ou na pasta escolhida na Configuração)."""
+        base = self.cfg.get("pasta_estoque") or os.path.join(pasta_dados(), "estoque")
+        pc = estoque.identificar_pc(pasta_dados())
+        self.livros = {chave: estoque.Livro(os.path.join(base, chave), pc) for chave in ("pedagogico", "limpeza")}
+
+    def _atualizar_selos(self):
+        """Selo laranja na aba: só aparece quando há material pendente (já na lista de entrada ou de
+        saída, mas ainda não registrado). Registrou ou limpou a lista, o selo some."""
+        if not hasattr(self, "barra_abas"):
+            return
+        for chave in ("pedagogico", "limpeza"):
+            painel = self.paineis.get(chave)
+            n = painel.pendentes() if painel is not None else 0
+            self.barra_abas.definir_selo(chave, str(n) if n else "")
+
+    def _painel(self, chave):
+        if chave not in self.paineis:
+            titulo = "Estoque pedagógico" if chave == "pedagogico" else "Estoque de limpeza"
+            self.paineis[chave] = tela_estoque.PainelEstoque(
+                self, self, self.livros[chave], titulo, chave, baixa=self.tela_baixa, ao_mudar=self._atualizar_selos)
+        return self.paineis[chave]
+
+    def _ao_mudar_aba(self, chave):
+        self.area.pack_forget()
+        for painel in self.paineis.values():
+            painel.pack_forget()
+        self.cabecalho.itemconfigure(self._id_sub, text=SUBTITULO_ABA[chave])
+        if chave == "declaracoes":
+            self.area.pack(fill="both", expand=True)
+            self._focar_pesquisa()
+            return
+        painel = self._painel(chave)
+        painel.pack(fill="both", expand=True)
+        painel.ao_mostrar()
+
+    def _area_ativa(self):
+        """A área que rola com a rodinha do mouse: a das declarações ou a do estoque aberto."""
+        chave = self.barra_abas.ativa if hasattr(self, "barra_abas") else "declaracoes"
+        painel = self.paineis.get(chave)
+        return painel.area if painel is not None else self.area
+
     def _montar_interface(self):
+        tela_estoque.usar(sys.modules[__name__])
         self._montar_cabecalho()
+        self.barra_abas = tela_estoque.BarraAbas(
+            self, [("declaracoes", "Declarações"), ("pedagogico", "Estoque pedagógico"),
+                   ("limpeza", "Estoque de limpeza")], self._ao_mudar_aba, baixa=self.tela_baixa)
+        self.barra_abas.pack(fill="x")
+        self._atualizar_selos()
         self.area = AreaRolavel(self, COR_FUNDO)
         self.area.pack(fill="both", expand=True)
         corpo = tk.Frame(self.area.miolo, bg=COR_FUNDO)
@@ -2463,8 +2528,8 @@ class Aplicacao(tk.Tk):
         if w is not None and self.rolagem.winfo_ismapped():
             self.tela.yview_scroll(int(-evento.delta / 120) or (-1 if evento.delta > 0 else 1), "units")
             return
-        if alvo.winfo_class() not in ("TCombobox", "Listbox"):
-            self.area.rolar(evento)
+        if alvo.winfo_class() not in ("TCombobox", "Listbox", "Treeview"):
+            self._area_ativa().rolar(evento)
 
     def _pesquisar(self):
         if not self.alunos:
@@ -3022,6 +3087,15 @@ class Aplicacao(tk.Tk):
 
     def configuracao_salva(self):
         self._atualizar_relogio()
+        base = self.cfg.get("pasta_estoque") or os.path.join(pasta_dados(), "estoque")
+        if self.livros and os.path.normpath(os.path.dirname(self.livros["pedagogico"].pasta)) != os.path.normpath(base):
+            self._abrir_livros()                      # a pasta do estoque mudou: lê os livros de lá
+            for painel in self.paineis.values():
+                painel.destroy()
+            self.paineis = {}
+            self._atualizar_selos()
+            if self.barra_abas.ativa != "declaracoes":
+                self._ao_mudar_aba(self.barra_abas.ativa)
 
 
 def _nome_meses_arquivo(nomes):
@@ -3603,6 +3677,8 @@ class JanelaConfiguracao(tk.Toplevel):
         self.var_word = tk.BooleanVar(value=bool(cfg.get("word", False)))
         self.var_pasta = tk.StringVar(value=cfg.get("pasta_saida") or
                                       os.path.join(pasta_documentos(), "Declarações Escolares"))
+        self.pasta_estoque_padrao = os.path.join(pasta_dados(), "estoque")
+        self.var_pasta_estoque = tk.StringVar(value=cfg.get("pasta_estoque") or self.pasta_estoque_padrao)
 
         self.area = AreaRolavel(self, COR_FUNDO)
         self.area.pack(fill="both", expand=True)
@@ -3653,6 +3729,13 @@ class JanelaConfiguracao(tk.Toplevel):
         linha.pack(fill="x", pady=(10, 0))
         campo(linha, "Pasta onde as declarações ficam salvas", self.var_pasta).pack(side="left", fill="x", expand=True)
         Botao(linha, "Escolher...", self._escolher_pasta, pad_y=5, pad_x=12).pack(side="left", padx=(8, 0), pady=(18, 0))
+        linha = tk.Frame(c, bg=COR_CARTAO)
+        linha.pack(fill="x", pady=(10, 0))
+        campo(linha, "Pasta do estoque de material", self.var_pasta_estoque).pack(side="left", fill="x", expand=True)
+        Botao(linha, "Escolher...", self._escolher_pasta_estoque, pad_y=5, pad_x=12).pack(side="left", padx=(8, 0), pady=(18, 0))
+        rotulo(c, "Para ver o mesmo estoque nos dois computadores, escolha nos dois a mesma pasta (por exemplo, uma "
+                  "pasta do OneDrive). Ao trocar, copie antes a pasta antiga para a nova.",
+               fraco=True, tam=9, wraplength=420, justify="left").pack(anchor="w", pady=(4, 0))
 
         # 2 - Dados da escola
         externo, c, _ = cartao(corpo, "Dados da escola e de quem assina", 2)
@@ -3758,6 +3841,11 @@ class JanelaConfiguracao(tk.Toplevel):
         if pasta:
             self.var_pasta.set(pasta)
 
+    def _escolher_pasta_estoque(self):
+        pasta = filedialog.askdirectory(parent=self, title="Pasta do estoque de material")
+        if pasta:
+            self.var_pasta_estoque.set(os.path.normpath(pasta))
+
     def _mostrar_logo(self):
         tem = os.path.exists(os.path.join(pasta_dados(), ARQ_LOGO))
         self.rotulo_logo.configure(text="✓ cadastrado" if tem else "nenhum")
@@ -3800,6 +3888,8 @@ class JanelaConfiguracao(tk.Toplevel):
         cfg["pdf"] = bool(self.var_pdf.get()) or not self.var_word.get()
         cfg["word"] = bool(self.var_word.get())
         cfg["pasta_saida"] = self.var_pasta.get().strip()
+        pasta_estoque = os.path.normpath(self.var_pasta_estoque.get().strip() or self.pasta_estoque_padrao)
+        cfg["pasta_estoque"] = "" if pasta_estoque == os.path.normpath(self.pasta_estoque_padrao) else pasta_estoque
         for velho in ("assinante", "cargo", "registro"):
             cfg.pop(velho, None)
         gravar_json(ARQ_CONFIG, cfg)

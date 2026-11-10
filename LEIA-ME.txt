@@ -57,5 +57,52 @@ DECLARAÇÕES ESCOLARES - como usar
    O que não vier no arquivo aparece como "não consta no arquivo". Se precisar,
    clique em "Corrigir" (vale só para aquela declaração).
 
+4. ESTOQUE DE MATERIAL (abas "Estoque pedagógico" e "Estoque de limpeza")
+   Clique numa das abas, no alto da janela, abaixo da faixa azul. As duas
+   funcionam igual e cada uma tem o seu estoque. O selo laranja ao lado do nome
+   da aba só aparece quando há material esperando: já colocado numa lista de
+   entrada ou de saída que ainda não foi registrada (registrou ou limpou a
+   lista, o selo some).
+   No alto da aba há quatro cartões grandes: Estoque, Entrada de material,
+   Saída de material e Histórico. Clique num deles para abrir a página; o da
+   página aberta fica com a borda azul e cada um mostra um resumo (quantos
+   materiais, o que está esperando registro, quantos registros). Páginas:
+   - Estoque: o relatório, com o saldo de cada material (nome, unidade e
+     quantidade em estoque). "Novo material" cadastra um material (nome e
+     unidade). Clique duas vezes num material para editar ou ocultar. "Relatório em PDF" gera o relatório
+     pronto para imprimir (pasta Declarações Escolares\Estoque).
+   - Entrada de material: digite o nome do material (ou parte dele); as opções
+     aparecem logo abaixo, clique na certa. Se o material ainda não existe, a
+     última opção cadastra na hora. Digite a quantidade e clique em "Adicionar à
+     lista". Quando a lista estiver completa, clique em "Registrar entrada": o
+     estoque soma sozinho.
+     Para dar entrada de uma NOTA FISCAL, clique em "Ler nota fiscal (PDF)" e
+     escolha o PDF da nota (pode ser escaneada). O programa lê a tabela de
+     produtos (isso leva cerca de 1 minuto por página) e abre uma lista para
+     você CONFERIR: clique num produto para ver embaixo a linha da nota, corrija
+     o que o leitor errou (dois cliques) e tire o que não deve entrar. O que
+     ainda não existe no estoque é cadastrado sozinho. Os produtos vão para a
+     lista de entrada; confira e clique em "Registrar entrada". Esse recurso
+     usa um leitor de texto que precisa estar instalado no computador.
+   - Saída de material: escolha quem recebe (digite o nome e clique; quem ainda
+     não está cadastrado é cadastrado na hora e fica salvo), depois os materiais
+     e as quantidades. A coluna "Fica em estoque" mostra o que sobra. O programa
+     não deixa sair mais do que existe. "Importar saída anterior" traz para a
+     lista os materiais de uma saída que já foi feita (confira as quantidades).
+     "Registrar saída" dá baixa no estoque. A data e a hora ficam registradas.
+   - Histórico: todas as entradas e saídas, com data, hora, destinatário e
+     materiais. "Repetir esta saída" leva os mesmos materiais para a página de
+     Saída. "Estornar" desfaz um registro feito por engano: o estoque volta ao que
+     era e o registro continua no histórico, marcado como estornado.
+   Nas listas de entrada e de saída, para mudar a quantidade de um material
+   que já está na lista, clique nele e em "Editar quantidade" (ou clique duas
+   vezes), antes de registrar.
+   Se os dois computadores da escola vão usar o mesmo estoque, escolha, nos dois,
+   a mesma pasta em Configuração > "Pasta do estoque de material" (por exemplo,
+   uma pasta do OneDrive). Cada computador grava no seu próprio arquivo e o
+   saldo soma tudo, então um não apaga o que o outro registrou. Se aparecer
+   diferença, clique em "Atualizar" na aba.
+
 Os dados ficam em %APPDATA%\Declaracoes Escolares (config.json, alunos.json,
-frequencia.json, historico.json; gier.log anota cada busca no Gier). Nada é enviado para a internet.
+frequencia.json, historico.json; gier.log anota cada busca no Gier; a pasta
+"estoque" guarda os dois estoques). Nada é enviado para a internet.
