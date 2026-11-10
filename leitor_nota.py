@@ -21,6 +21,8 @@ import os
 import re
 import sys
 import unicodedata
+from collections import Counter
+from difflib import SequenceMatcher
 
 # Unidades que aparecem na nota -> como ficam no estoque (ver estoque.UNIDADES).
 UNIDADES_NOTA = {
@@ -134,7 +136,9 @@ def achar_colunas(palavras):
     Procura os títulos "UNID." / "V. UNIT." / "V. TOTAL" / "NCM" / "CÓD." e devolve as colunas,
     ou None se a página não tem a tabela de produtos.
     """
-    unid = [p for p in palavras if _chave(p.t).startswith("UNID")]
+    unid = [p for p in palavras if _chave(p.t).startswith("UNID")
+            and any(m in _chave(q.t) for q in palavras if abs(q.cy - p.cy) < 14 and q is not p
+                    for m in ("NCM", "UNIT", "VTOTAL"))]
     if not unid:
         return None
     u = min(unid, key=lambda p: p.y)
@@ -262,8 +266,14 @@ def dados_da_nota(palavras):
         if len(t) >= 4 and not re.search(r"DANFE|DOCUMENTO|AUXILIAR|FISCAL|ENTRADA", sem_acento(t).upper()):
             fornecedor = t
             break
-    return {"numero": numero.group(1) if numero else "", "emissao": emissao.group(1) if emissao else "",
-            "fornecedor": fornecedor}
+    cnpj = re.search(r"\b(\d{2}\.\d{3}\.\d{3}/\d{4}-\d{2})\b", texto)
+    dados = {"numero": numero.group(1) if numero else "", "emissao": emissao.group(1) if emissao else "",
+             "fornecedor": fornecedor, "cnpj": cnpj.group(1) if cnpj else ""}
+    # quem é o fornecedor, para guardar os códigos dele no catálogo: o CNPJ, ou (se não foi lido) o nome
+    dados["fornecedor_chave"] = re.sub(r"\D", "", dados["cnpj"]) or (_chave_nome(fornecedor) if fornecedor else "")
+    dados["rotulo"] = " – ".join(p for p in (fornecedor, "NF " + dados["numero"] if dados["numero"] else "",
+                                             dados["emissao"]) if p)
+    return dados
 
 
 # ---------------------------------------------------------------------------
@@ -273,6 +283,48 @@ def dados_da_nota(palavras):
 def _chave_nome(texto):
     """Só letras e números, minúsculos e sem acento: 'Cola branca 90 g' e 'COLA BRANCA 90g' ficam iguais."""
     return re.sub(r"[^a-z0-9]+", "", sem_acento(texto).lower())
+
+
+chave_nome = _chave_nome
+
+
+def _numero_limpo(n):
+    return str(int(n)) if float(n).is_integer() else ("%g" % n)
+
+
+def tamanho_embalagem(texto):
+    """
+    O tamanho da embalagem, para saber se dois produtos de mesmo nome são o mesmo: 'Frasco 500ml' -> ('vol', 500),
+    'Com 2 Litros' -> ('vol', 2000), 'Unid c/ 35 grs' -> ('massa', 35), 'Pacote com 8' -> ('un', 8).
+    Sem tamanho que dê para entender ('Unid', 'c/ 500') -> None (não atrapalha: nunca conta como diferente).
+    """
+    t = sem_acento(texto or "").lower()
+    m = re.search(r"(\d+(?:[.,]\d+)?)\s*(ml|litros?|lts?|l|kg|gramas?|grs?|g|unidades?|unid|und|un)\b", t)
+    if m:
+        n, u = float(m.group(1).replace(",", ".")), m.group(2)
+        if u == "ml":
+            return ("vol", n)
+        if u in ("l", "lt", "lts") or u.startswith("litro"):
+            return ("vol", n * 1000)
+        if u == "kg":
+            return ("massa", n * 1000)
+        if u in ("g", "gr", "grs") or u.startswith("grama"):
+            return ("massa", n)
+        return ("un", n)
+    m = re.search(r"(?:pacote|pct|caixa|cx)\s*(?:com|c/)\s*(\d+)\b", t)
+    return ("un", float(m.group(1))) if m else None
+
+
+def descrever_tamanho(tamanho):
+    """('vol', 500) -> '500 ml'; ('massa', 250) -> '250 g'; ('un', 8) -> '8 un'."""
+    if not tamanho:
+        return ""
+    grandeza, n = tamanho
+    if grandeza == "vol":
+        return "{} L".format(_numero_limpo(n / 1000)) if n >= 1000 else "{} ml".format(_numero_limpo(n))
+    if grandeza == "massa":
+        return "{} kg".format(_numero_limpo(n / 1000)) if n >= 1000 else "{} g".format(_numero_limpo(n))
+    return "{} un".format(_numero_limpo(n))
 
 
 def achar_igual(descricao, materiais):
@@ -285,6 +337,355 @@ def achar_igual(descricao, materiais):
     if not alvo:
         return None
     return next((m for m in materiais if _chave_nome(m["nome"]) == alvo), None)
+
+
+# ---------------------------------------------------------------------------
+# "É o mesmo produto?" (para somar no mesmo material mesmo escrito de jeito diferente)
+# ---------------------------------------------------------------------------
+
+# Palavras que não dizem qual é o produto (ligações e abreviações).
+_PALAVRAS_VAZIAS = {"de", "da", "do", "das", "dos", "para", "p", "em", "e", "com", "c", "a", "o", "as", "os", "un",
+                    "und", "unid", "ref", "tipo", "similar", "ou"}
+# Uma cor (ou tom) a mais no nome já é outro produto: "Papel Cartão" e "Papel Cartão Rosa" não se juntam sozinhos.
+_CORES = {"amarelo", "amarela", "azul", "verde", "vermelho", "vermelha", "rosa", "preto", "preta", "branco", "branca",
+          "laranja", "roxo", "roxa", "marrom", "cinza", "bege", "dourado", "prata", "lilas", "escuro", "claro",
+          "royal", "gelo", "colorido"}
+
+
+def chave_produto(texto):
+    """
+    As palavras que identificam o produto: sem acento, sem maiúsculas, sem o que está entre parênteses
+    ("tipo Veja similar"), sem palavras de ligação e com o plural simples cortado.
+    'Sabão em Pó (marca X)' -> {'sabao', 'po'}.
+    """
+    sem_parenteses = re.sub(r"\([^)]*\)", " ", texto or "")
+    palavras = re.findall(r"[a-z0-9]+", sem_acento(sem_parenteses).lower())
+    if not [p for p in palavras if p not in _PALAVRAS_VAZIAS]:                 # nome só com parênteses
+        palavras = re.findall(r"[a-z0-9]+", sem_acento(texto or "").lower())
+    chave = set()
+    for p in palavras:
+        if p in _PALAVRAS_VAZIAS:
+            continue
+        if len(p) > 3 and p.endswith("s") and not p.endswith("ss"):
+            p = p[:-1]
+        chave.add(p)
+    return frozenset(chave)
+
+
+def _mesma_palavra(a, b):
+    """Igual, ou quase (uma letra trocada: 'liquida'/'liquido', 'cademo'/'caderno'). Números só se forem iguais."""
+    if a == b:
+        return True
+    if not (a.isalpha() and b.isalpha()) or min(len(a), len(b)) < 5:
+        return False
+    if a.replace("rn", "m") == b.replace("rn", "m"):               # erro clássico do OCR: "rn" lido como "m"
+        return True
+    return SequenceMatcher(None, a, b).ratio() >= 0.84
+
+
+def _diferenca(a, b):
+    """Palavras de `b` que não aparecem em `a` (comparando de forma tolerante)."""
+    return {y for y in b if not any(_mesma_palavra(x, y) for x in a)}
+
+
+def mesmo_produto(nome_a, nome_b):
+    """
+    Dois nomes são o mesmo produto quando têm as mesmas palavras, ou um tem só PALAVRAS A MAIS que não mudam o
+    produto ("Detergente" e "Detergente líquido"). Não junta se a palavra a mais for uma cor ou tiver número
+    ("Papel Cartão Rosa"/"Preto", "Sacos de 100 litros"/"50 litros"), nem se o nome curto for uma palavra solta e
+    o outro for comprido ("Papel" e "Papel Cartão 48x66 Rosa").
+    """
+    a, b = chave_produto(nome_a), chave_produto(nome_b)
+    if not a or not b:
+        return False
+    so_b, so_a = _diferenca(a, b), _diferenca(b, a)
+    if not so_a and not so_b:
+        return True
+    if so_a and so_b:
+        return False                                            # cada um tem algo que o outro não tem
+    curto, longo, extras = (a, b, so_b) if not so_a else (b, a, so_a)
+    if any(re.search(r"\d", p) or p in _CORES for p in extras):
+        return False
+    return len(curto) >= 2 or len(longo) <= 3
+
+
+def achar_mesmo(descricao, materiais, tolerante=True):
+    """O material já cadastrado que é o mesmo produto (o mais parecido), ou None."""
+    if not tolerante:
+        return achar_igual(descricao, materiais)
+    alvo = chave_produto(descricao)
+    melhor, menor = None, None
+    for m in materiais:
+        if not mesmo_produto(descricao, m["nome"]):
+            continue
+        distancia = len(alvo ^ chave_produto(m["nome"]))
+        if menor is None or distancia < menor:
+            melhor, menor = m, distancia
+    return melhor
+
+
+def _conflito_tamanho(item, tamanho_outro):
+    """Mesmo nome, mas tamanhos de embalagem diferentes (e a pessoa ainda não decidiu)."""
+    atual = tamanho_embalagem(item.get("embalagem") or "")
+    return atual is not None and tamanho_outro is not None and atual != tamanho_outro and not item.get("tamanho_resolvido")
+
+
+def _candidatos_iniciais(materiais, catalogo):
+    return [{"nome": m["nome"], "_destino": ("existente", m),
+             "tamanho": catalogo.tamanho_do_nome(m["nome"]) if catalogo else None} for m in materiais]
+
+
+def _candidato_do_item(item, candidatos, catalogo):
+    """O candidato (material do estoque ou item de cima) com que o item se junta: nome igual, ou parecido."""
+    if item.get("separado"):
+        return achar_igual(item["descricao"], candidatos)
+    achado = achar_mesmo(item["descricao"], candidatos)
+    if achado is not None and chave_produto(item["descricao"]) != chave_produto(achado["nome"]) \
+            and catalogo is not None and catalogo.sao_diferentes(item["descricao"], achado["nome"]):
+        return None                                           # a pessoa já disse que esses dois são diferentes
+    return achado
+
+
+def _novo_candidato(n, item):
+    return {"nome": item["descricao"], "_destino": ("junta", n, item["descricao"]),
+            "tamanho": tamanho_embalagem(item.get("embalagem") or "")}
+
+
+def planejar_destinos(itens, materiais, catalogo=None):
+    """
+    Para cada item, em ordem, onde ele vai ficar: ("existente", material), ("junta", nº do 1º item, nome) quando
+    é o mesmo produto de um item de cima da própria lista, ou ("novo",) quando vira um material novo.
+    A mesma conta é refeita na hora de cadastrar, então a tela e o resultado sempre combinam.
+    """
+    candidatos = _candidatos_iniciais(materiais, catalogo)
+    destinos = []
+    for n, item in enumerate(itens):
+        achado = None
+        if not (item.get("tamanho_diferente_de") and not item.get("tamanho_resolvido")):
+            achado = _candidato_do_item(item, candidatos, catalogo)
+            if achado is not None and _conflito_tamanho(item, achado.get("tamanho")):
+                achado = None
+        if achado is not None:
+            destinos.append(achado["_destino"])
+        else:
+            candidatos.append(_novo_candidato(n, item))
+            destinos.append(("novo",))
+    return destinos
+
+
+def _duvida(n, item, motivo, nome_destino, destino, origem, tamanho_outro=None):
+    return {"indice": n, "item": item, "motivo": motivo, "nome_destino": nome_destino, "destino": destino,
+            "origem": origem, "tamanho_item": descrever_tamanho(tamanho_embalagem(item.get("embalagem") or "")),
+            "tamanho_outro": descrever_tamanho(tamanho_outro) if tamanho_outro else ""}
+
+
+def achar_duvidas(itens, materiais, catalogo=None):
+    """
+    O que vale PERGUNTAR à pessoa. Dois motivos:
+      "nome": parece o mesmo produto de outro (do estoque ou de cima na lista), mas com palavras diferentes
+              ("Detergente" e "Detergente líquido"). Nome igual (só acento, maiúscula, plural ou parênteses
+              diferente) o programa junta sozinho e não pergunta.
+      "tamanho": o nome é igual, mas o tamanho da embalagem é diferente ("Sabão em pó" de 500 g e de 250 g).
+    Cada dúvida: {"indice", "item", "motivo", "nome_destino", "destino", "origem", "tamanho_item", "tamanho_outro"}
+    (origem = o item de cima, se for da própria lista).
+    """
+    candidatos = _candidatos_iniciais(materiais, catalogo)
+    duvidas = []
+    for n, item in enumerate(itens):
+        produto = item.get("tamanho_diferente_de")                  # do catálogo: nome igual, tamanho diferente
+        if produto and not item.get("tamanho_resolvido"):
+            duvidas.append(_duvida(n, item, "tamanho", produto["nome"], ("catalogo", produto), None,
+                                   tamanho_embalagem(produto.get("embalagem") or "")))
+            continue
+        igual = achar_igual(item["descricao"], candidatos)
+        if igual is not None:
+            if _conflito_tamanho(item, igual.get("tamanho")):
+                destino = igual["_destino"]
+                duvidas.append(_duvida(n, item, "tamanho", igual["nome"], destino,
+                                       itens[destino[1]] if destino[0] == "junta" else None, igual.get("tamanho")))
+            continue                                                 # nome igual: junta sozinho
+        parecido = _candidato_do_item(item, candidatos, catalogo)
+        if parecido is not None:
+            if chave_produto(item["descricao"]) != chave_produto(parecido["nome"]):
+                destino = parecido["_destino"]
+                duvidas.append(_duvida(n, item, "nome", parecido["nome"], destino,
+                                       itens[destino[1]] if destino[0] == "junta" else None))
+            continue                                                 # junta (sozinho ou depois de perguntar)
+        candidatos.append(_novo_candidato(n, item))
+    return duvidas
+
+
+# ---------------------------------------------------------------------------
+# Listas simples: ITEM | DESCRIÇÃO | UND | POR FUNC | QUANT.  (material de limpeza mensal, fichas de controle)
+# ---------------------------------------------------------------------------
+
+# Se a linha tem um destes trechos, a lista já acabou (rodapé com local, data, assinatura e carimbo).
+FIM_LISTA = ("LOCALDAENTREGA", "DATADAENTREGA", "ASSINATURA", "CARIMBO")
+
+_UNIDADES_LISTA = {"unid": "unidade", "unidade": "unidade", "und": "unidade", "pct": "pacote", "pacote": "pacote",
+                   "frasco": "frasco", "caixa": "caixa", "cx": "caixa", "litro": "litro", "litros": "litro",
+                   "kg": "kg", "rolo": "rolo", "par": "par", "galão": "galão", "galao": "galão"}
+
+
+class CabecalhoLista:
+    """Onde ficam as colunas (centros) e onde começam as linhas de uma lista simples."""
+
+    def __init__(self, item_cx, und_cx, qtd_cx, por_cx, base, esq, dir_):
+        self.item_cx, self.und_cx, self.qtd_cx, self.por_cx = item_cx, und_cx, qtd_cx, por_cx
+        self.base, self.esq, self.dir = base, esq, dir_
+
+    @property
+    def meia_und(self):
+        """Metade da largura (aproximada) da coluna da unidade: o que está mais perto que isso é a unidade."""
+        return max(110.0, 0.35 * (self.qtd_cx - self.und_cx))
+
+
+def achar_cabecalho_lista(palavras):
+    """Procura os títulos ITEM / DESCRIÇÃO / UND (ou TIPO DE UND.) / QUANT. (ou QT. TOTAIS)."""
+    item = next((p for p in palavras if _chave(p.t) == "ITEM"), None)
+    if item is None:
+        return None
+    faixa = [p for p in palavras if item.cy - 30 <= p.cy <= item.cy + 36]
+    desc = next((p for p in faixa if _chave(p.t).startswith("DESCRI")), None)
+    qtd = (next((p for p in faixa if "TOTAIS" in _chave(p.t)), None)
+           or next((p for p in faixa if _chave(p.t).startswith("QUANT")), None))
+    und = [p for p in faixa if _chave(p.t) in ("UND", "UNID", "UNIDADE") or _chave(p.t).startswith("TIPODE")]
+    if not (desc and qtd and und):
+        return None
+    und_cx = sum(p.cx for p in und) / len(und)
+    por = [p for p in faixa if _chave(p.t).startswith(("POR", "QTPOR", "FUNC")) and und_cx < p.cx < qtd.cx]
+    por_cx = sum(p.cx for p in por) / len(por) if por else und_cx + 0.6 * (qtd.cx - und_cx)
+    return CabecalhoLista(item_cx=item.cx, und_cx=und_cx, qtd_cx=qtd.cx, por_cx=por_cx,
+                          base=max(p.cy for p in faixa) + 20, esq=max(0.0, item.x - 25), dir_=qtd.x + qtd.w + 50)
+
+
+def converter_und_lista(texto):
+    """
+    'Com 850 ml' -> ('unidade', '850 ml') ; 'Litro' -> ('litro', '') ; 'Pacote com 8' -> ('pacote', 'pacote com 8') ;
+    'Unid c/ 35 grs' -> ('unidade', '35 grs') ; 'PCT 500g' -> ('pacote', 'pacote 500g').
+    A unidade serve para contar no estoque; o resto (o tamanho da embalagem) fica à parte, só para a pessoa ver
+    na conferência: o mesmo produto escrito com embalagens diferentes nas listas vai para o mesmo material.
+    """
+    t = re.sub(r"\s+", " ", (texto or "").strip()).lower()
+    m = re.match(r"^(unidade|unid|und|pacote|pct|frasco|caixa|cx|litros|litro|kg|rolo|par|gal[aã]o)\b\.?\s*(.*)$", t)
+    palavra, resto = (m.group(1), m.group(2)) if m else ("", t)
+    tinha_com = bool(re.match(r"^(com|c/)\s*", resto))
+    resto = re.sub(r"^(com|c/|de)\s*", "", resto).strip()
+    unidade = _UNIDADES_LISTA.get(palavra, "unidade")
+    if not resto:
+        return unidade, ""
+    if unidade in ("unidade", "litro") or not palavra:
+        return "unidade" if not palavra else unidade, ("c/ " + resto) if resto.isdigit() else resto
+    return unidade, "{} {}{}".format(unidade, "com " if tinha_com else "", resto)
+
+
+def montar_nome_lista(descricao):
+    """'DETERGENTE' -> 'Detergente' (nomes todos em maiúsculas viram frase normal). A embalagem não entra no nome."""
+    d = limpar_descricao(descricao)
+    sem_parenteses = re.sub(r"\([^)]*\)", "", d)           # "PEDRA SANITÁRIA (desodex ou similar)" também é maiúsculo
+    if d and sem_parenteses == sem_parenteses.upper():
+        d = d.lower()
+        d = d[:1].upper() + d[1:]
+    return d
+
+
+def _ler_linha_lista(pals, c):
+    pals = sorted(pals, key=lambda p: p.x)
+    num = next((p for p in pals if re.fullmatch(r"\d{1,3}", p.t.strip()) and abs(p.cx - c.item_cx) <= 70), None)
+    resto = [p for p in pals if p is not num]
+    numericos = sorted((p for p in resto if ler_quantidade_nota(p.t) is not None and p.cx > c.und_cx + c.meia_und * 0.5),
+                       key=lambda p: p.x)
+    # cada número é da coluna cujo título está mais perto dele (se faltar a quantidade, o "por funcionário"
+    # não pode ser tomado por ela)
+    qtd_box = next((p for p in reversed(numericos) if abs(p.cx - c.qtd_cx) <= abs(p.cx - c.por_cx)), None)
+    por_box = next((p for p in reversed(numericos) if abs(p.cx - c.por_cx) < abs(p.cx - c.qtd_cx)), None)
+    und_boxes = [p for p in resto if p is not qtd_box and p is not por_box and abs(p.cx - c.und_cx) <= c.meia_und]
+    desc_boxes = [p for p in resto if p.cx < c.und_cx - c.meia_und]
+
+    descricao = limpar_descricao(_juntar(desc_boxes))
+    und_texto = _juntar(und_boxes)
+    quantidade = ler_quantidade_nota(qtd_box.t) if qtd_box else None
+    if (not descricao or len(re.sub(r"[^A-Za-zÀ-ú]", "", descricao)) < 3) and quantidade is None:
+        return None
+    if num is None and quantidade is None:
+        return None
+    unidade, detalhe = converter_und_lista(und_texto)
+    avisos = []
+    if not descricao:
+        avisos.append("descrição não foi lida")
+    if quantidade is None:
+        avisos.append("quantidade não foi lida")
+    return {"codigo": num.t.strip() if num else "", "descricao": montar_nome_lista(descricao), "embalagem": detalhe,
+            "unidade_nota": und_texto or None, "unidade": unidade, "quantidade": quantidade,
+            "valor_unitario": None, "valor_total": None, "avisos": avisos,
+            "por_func": ler_quantidade_nota(por_box.t) if por_box else None, "caixa": (c.esq, c.dir)}
+
+
+def _conferir_por_funcionario(itens):
+    """
+    Nessas listas a quantidade é "por funcionário" x um número fixo (ex.: 15 x 4 = 60 e 4 x 4 = 16).
+    Quem não segue a regra do resto da lista foi provavelmente mal lido: fica marcado para conferir.
+    """
+    razoes = [round(i["quantidade"] / i["por_func"]) for i in itens if i["quantidade"] and i.get("por_func")]
+    if len(razoes) < 4:
+        return
+    comum, vezes = Counter(razoes).most_common(1)[0]
+    if comum < 1 or vezes < 0.6 * len(razoes):
+        return
+    for i in itens:
+        por = i.get("por_func")
+        if not por:
+            continue
+        if i["quantidade"] is None:
+            i["quantidade"] = float(por * comum)
+            i["avisos"] = [a for a in i["avisos"] if "quantidade não foi lida" not in a]
+            i["avisos"].append("quantidade calculada (por funcionário x {})".format(comum))
+        elif abs(i["quantidade"] - por * comum) > 0.01:
+            i["avisos"].append("quantidade não é {:g} x {} como no resto da lista".format(por, comum))
+
+
+def extrair_itens_lista(palavras):
+    """Itens de UMA página de lista simples. Devolve (itens, cabeçalho) ou ([], None) se a página não é uma lista."""
+    cab = achar_cabecalho_lista(palavras)
+    if cab is None:
+        return [], None
+    itens = []
+    for g in agrupar_linhas([p for p in palavras if p.cy > cab.base], 16):
+        if any(marca in _chave(_juntar(g["palavras"])) for marca in FIM_LISTA):
+            break
+        item = _ler_linha_lista(g["palavras"], cab)
+        if item:
+            item["y"] = g["cy"]
+            itens.append(item)
+    _conferir_por_funcionario(itens)
+    return itens, cab
+
+
+def dados_da_lista(palavras, cab):
+    """Mês, DDZ, kit e empresa do alto da lista, e o texto que vai na observação da entrada."""
+    topo = sorted((p for p in palavras if p.cy < cab.base), key=lambda p: (round(p.cy / 16), p.x))
+    texto = " ".join(p.t for p in topo)
+    mes = re.search(r"\b(\d{1,2}/\d{4})\b", texto)
+
+    def valor_depois(rotulo):
+        for i, p in enumerate(topo):
+            if _chave(p.t).startswith(rotulo):
+                t = re.sub(r"^\W*{}\W*".format(rotulo), "", p.t.strip(), flags=re.I).strip()
+                if not t and i + 1 < len(topo):
+                    t = topo[i + 1].t.strip()
+                return t
+        return ""
+
+    ddz, kit = valor_depois("DDZ"), valor_depois("KIT")
+    empresa = next((p.t.strip() for p in topo if "LTDA" in _chave(p.t)), "")
+    partes = ["Material de limpeza" + (" " + mes.group(1) if mes else "")]
+    if ddz:
+        partes.append("DDZ " + ddz)
+    if kit and kit.isdigit():
+        partes.append("kit " + kit)
+    if empresa:
+        partes.append(empresa)
+    return {"numero": "", "emissao": mes.group(1) if mes else "", "fornecedor": empresa, "rotulo": " – ".join(partes)}
 
 
 # ---------------------------------------------------------------------------
@@ -378,7 +779,7 @@ class LeitorNota:
 
     def ler(self, caminho_pdf, progresso=None, cancelado=None):
         """
-        Devolve {"itens": [...], "nota": {...}, "paginas": n}. `progresso(texto, parte, total)` é
+        Devolve {"itens": [...], "notas": [{"rotulo": ...}], "paginas": n}. `progresso(texto, parte, total)` é
         chamado a cada passo; `cancelado()` devolve True se a pessoa desistiu.
         """
         ok, motivo = disponivel()
@@ -395,7 +796,7 @@ class LeitorNota:
         except Exception as erro:
             raise ErroLeitura("Não consegui abrir o PDF ({}).".format(erro))
         n = min(len(pdf), 12)
-        itens, nota = [], {"numero": "", "emissao": "", "fornecedor": ""}
+        itens, notas = [], []
         passos = n * 2
         for i in range(n):
             if cancelado and cancelado():
@@ -405,23 +806,30 @@ class LeitorNota:
             imagem, _angulo = endireitar(imagem)
             avisar("Lendo a página {} de {} (leva cerca de 1 minuto)…".format(i + 1, n), i * 2 + 1, passos)
             palavras = self._palavras(imagem)
-            achados, colunas = extrair_itens(palavras)
-            if colunas is None:
-                continue
-            if not nota["numero"]:
-                nota = {k: nota[k] or v for k, v in dados_da_nota(palavras).items()}
+            achados, colunas = extrair_itens(palavras)                  # nota fiscal (DANFE)?
+            if colunas is not None:
+                dados, meia_altura = dados_da_nota(palavras), 19
+                if not any(n_["numero"] and n_["numero"] == dados["numero"] for n_ in notas):
+                    notas.append(dados)
+            else:                                                       # ou lista simples (ITEM | DESCRIÇÃO | UND ...)
+                achados, cab = extrair_itens_lista(palavras)
+                if cab is None:
+                    continue
+                dados, meia_altura = dados_da_lista(palavras, cab), 22
+                notas.append(dados)
             for it in achados:
                 it["pagina"] = i + 1
-                self._completar(imagem, colunas, it)
+                if colunas is not None:
+                    self._completar(imagem, colunas, it)
                 x1, x2 = it["caixa"]
-                it["imagem"] = imagem.crop((max(0, int(x1)), max(0, int(it["y"] - 19)),
-                                            min(imagem.width, int(x2)), min(imagem.height, int(it["y"] + 19))))
+                it["imagem"] = imagem.crop((max(0, int(x1)), max(0, int(it["y"] - meia_altura)),
+                                            min(imagem.width, int(x2)), min(imagem.height, int(it["y"] + meia_altura))))
             itens += achados
         avisar("Pronto.", passos, passos)
         if not itens:
-            raise ErroLeitura("Não encontrei a tabela de produtos neste PDF. Ele é uma nota fiscal (DANFE)? "
+            raise ErroLeitura("Não encontrei uma tabela de produtos neste PDF (nota fiscal ou lista de material). "
                               "Se a página está de cabeça para baixo ou muito escura, escaneie de novo.")
-        return {"itens": itens, "nota": nota, "paginas": n}
+        return {"itens": itens, "notas": notas, "paginas": n}
 
     def _completar(self, imagem, colunas, item):
         """Linha com descrição/unidade/quantidade em falta: lê só aquela faixa da nota, ampliada."""

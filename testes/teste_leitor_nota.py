@@ -102,7 +102,8 @@ def teste_dados_da_nota():
     ps = [P("Papelaria", 398, 44, 90, 20), P("Exemplo", 495, 44, 70, 20), P("Ltda", 572, 44, 40, 20), P("DANFE", 827, 26, 80, 20), P("000.123.456", 813, 224, 100, 20),
           P("10/11/2026", 1229, 338, 90, 20)]
     nota = ln.dados_da_nota(ps)
-    assert nota == {"numero": "000.123.456", "emissao": "10/11/2026", "fornecedor": "Papelaria Exemplo Ltda"}, nota
+    assert (nota["numero"], nota["emissao"], nota["fornecedor"]) == ("000.123.456", "10/11/2026", "Papelaria Exemplo Ltda"), nota
+    assert nota["rotulo"] == "Papelaria Exemplo Ltda – NF 000.123.456 – 10/11/2026", nota
 
 
 def teste_numeros_e_unidades():
@@ -129,6 +130,184 @@ def teste_comparar_com_materiais_existentes():
     # produtos que só mudam de cor NÃO podem virar o mesmo material
     assert ln.achar_igual("Papel Cartao 48x66 Preto c/20Fls (M5)", materiais) is None
     assert ln.achar_igual("", materiais) is None
+
+
+# ---------------------------------------------------------------------------
+# Listas simples (ITEM | DESCRIÇÃO | UND | POR FUNC | QUANT.), como o material de limpeza mensal
+# ---------------------------------------------------------------------------
+
+def cabecalho_lista(y=312, tipo="A"):
+    if tipo == "A":
+        return [P("ITEM", 257, y, 50, 22), P("DESCRIÇÃO", 552, y, 120, 22), P("UND", 990, y, 50, 22),
+                P("POR", 1172, y, 40, 22), P("FUNC", 1165, y + 20, 50, 22), P("QUANT", 1304, y, 70, 22)]
+    return [P("ITEM", 115, y, 50, 22), P("DESCRIÇÃO", 491, y, 120, 22), P("TIPO DE", 883, y, 80, 22),
+            P("UND.", 900, y + 23, 50, 22), P("QT. POR", 1097, y, 70, 22), P("FUNCIONARIO", 1060, y + 23, 130, 22),
+            P("QT. TOTAIS", 1340, y, 130, 22)]
+
+
+def linha_lista(y, n, desc, und, por, total, tipo="A"):
+    x = {"A": (282, 341, 940, 1186, 1333), "B": (141, 283, 895, 1140, 1404)}[tipo]
+    return [P(str(n), x[0], y, 20, 20), P(desc, x[1], y, 300, 20), P(und, x[2], y, 100, 20),
+            P(str(por), x[3], y, 20, 20), P(str(total), x[4], y, 25, 20)]
+
+
+def teste_lista_formato_a():
+    ps = cabecalho_lista() + linha_lista(372, 1, "ÁGUA SANITÁRIA", "Litro", 15, 60) \
+        + linha_lista(412, 2, "CÊRA LIQUIDA INCOLOR", "Com 850 ml", 3, 12) \
+        + linha_lista(452, 3, "PALHA DE AÇO", "Pacote com 8", 2, 8) \
+        + linha_lista(492, 4, "PEDRA SANITÁRIA (desodex ou similar)", "Unid c/ 35 grs", 4, 16) \
+        + linha_lista(532, 5, "ESPONJA DUPLA FACE", "Unid", 3, 12) \
+        + [P("LOCAL DA ENTREGA: Cmei Exemplo", 235, 580, 300, 20), P("Ana", 99, 700, 40, 20)]
+    itens, cab = ln.extrair_itens_lista(ps)
+    assert cab is not None and ln.achar_colunas(ps) is None, "a palavra Unid das linhas não pode virar título de nota"
+    assert [(i["descricao"], i["unidade"], i["quantidade"]) for i in itens] == [
+        ("Água sanitária", "litro", 60.0), ("Cêra liquida incolor", "unidade", 12.0),
+        ("Palha de aço", "pacote", 8.0),
+        ("Pedra sanitária (desodex ou similar)", "unidade", 16.0), ("Esponja dupla face", "unidade", 12.0)], itens
+    assert [i["embalagem"] for i in itens] == ["", "850 ml", "pacote com 8", "35 grs", ""], itens
+    assert all(not i["avisos"] for i in itens), itens
+
+
+def teste_lista_formato_b_usa_a_quantidade_total():
+    ps = cabecalho_lista(616, "B") + linha_lista(676, 1, "AGUA SANITÁRIA", "LITRO", 4, 8, "B") \
+        + linha_lista(722, 2, "ALCOOL LÍQUIDO ETILICO", "500 ml", 4, 8, "B") \
+        + linha_lista(767, 3, "PANO BRANCO DE PRATO", "UND", 2, 4, "B") \
+        + linha_lista(811, 4, "SABÃO EM PÓ", "PCT 500g", 4, 8, "B") \
+        + [P("ASSINATURA DO FUNCIONÁRIO", 246, 900, 300, 20)]
+    itens, cab = ln.extrair_itens_lista(ps)
+    assert [(i["descricao"], i["unidade"], i["quantidade"]) for i in itens] == [
+        ("Agua sanitária", "litro", 8.0), ("Alcool líquido etilico", "unidade", 8.0),
+        ("Pano branco de prato", "unidade", 4.0), ("Sabão em pó", "pacote", 8.0)], itens
+
+
+def teste_lista_confere_por_funcionario():
+    """Quantidade = por funcionário x número fixo; quem foge da regra é marcado, e a que falta é calculada."""
+    linhas = []
+    for n, (desc, por, total) in enumerate([("A", 15, 60), ("B", 3, 12), ("C", 4, 16), ("D", 2, 8), ("E", 10, 40)], 1):
+        linhas += linha_lista(372 + 40 * (n - 1), n, "PRODUTO " + desc, "Unid", por, total)
+    ps = cabecalho_lista() + linhas
+    # a linha C perdeu a quantidade (OCR) e a D foi lida errado (8 virou 6)
+    ps = [p for p in ps if not (abs(p.y - 452) < 5 and p.x > 1300)]
+    ps = [P("6", 1333, 492, 25, 20) if (abs(p.y - 492) < 5 and p.x > 1300) else p for p in ps]
+    itens, _ = ln.extrair_itens_lista(ps)
+    c, d = itens[2], itens[3]
+    assert c["quantidade"] == 16.0 and any("calculada" in a for a in c["avisos"]), c
+    assert d["quantidade"] == 6.0 and any("não é 2 x 4" in a for a in d["avisos"]), d
+    assert not itens[0]["avisos"] and not itens[1]["avisos"] and not itens[4]["avisos"], itens
+
+
+def teste_unidades_das_listas():
+    f = ln.converter_und_lista
+    assert f("Litro") == ("litro", "") and f("LITRO") == ("litro", "")
+    assert f("Unid") == ("unidade", "") and f("UND") == ("unidade", "")
+    assert f("Com 850 ml") == ("unidade", "850 ml") and f("Com 2 Litros") == ("unidade", "2 litros")
+    assert f("500 ml") == ("unidade", "500 ml")
+    assert f("Frasco 500ml") == ("frasco", "frasco 500ml")
+    assert f("Pacote com 8") == ("pacote", "pacote com 8") and f("Pct c/ 20 unid") == ("pacote", "pacote com 20 unid")
+    assert f("PCT 500g") == ("pacote", "pacote 500g")
+    assert f("Unid c/ 35 grs") == ("unidade", "35 grs") and f("Unid c/ 500") == ("unidade", "c/ 500")
+    assert f("") == ("unidade", "")
+    assert ln.montar_nome_lista("DETERGENTE") == "Detergente"
+    assert ln.montar_nome_lista("Caneta Bic Azul") == "Caneta Bic Azul"
+    assert ln.montar_nome_lista("PEDRA SANITÁRIA (desodex ou similar)") == "Pedra sanitária (desodex ou similar)"
+
+
+def teste_dados_da_lista():
+    ps = [P("MATERIAL DE LIMPEZA MENSAL", 705, 99, 300, 20), P("REFERENTE AO MÊS 09/2026 - SEMED", 664, 159, 400, 20),
+          P("DDZ CENTRO SUL - 24", 850, 205, 250, 20)] + cabecalho_lista()
+    cab = ln.achar_cabecalho_lista(ps)
+    dados = ln.dados_da_lista(ps, cab)
+    assert dados["emissao"] == "09/2026" and dados["rotulo"] == "Material de limpeza 09/2026 – DDZ CENTRO SUL - 24", dados
+    ps = [P("PRI APOIO ADMINISTRATIVO E OPERACIONAL LTDA", 470, 203, 600, 20), P("COMPETÊNCIA", 1324, 203, 120, 20),
+          P("08/2026", 1370, 228, 80, 20), P("DDZ:", 23, 308, 50, 20), P("CENTRO SUL", 288, 308, 150, 20),
+          P("KIT:", 19, 548, 50, 20), P("2", 283, 548, 20, 20)] + cabecalho_lista(616, "B")
+    dados = ln.dados_da_lista(ps, ln.achar_cabecalho_lista(ps))
+    assert dados["rotulo"] == "Material de limpeza 08/2026 – DDZ CENTRO SUL – kit 2 – PRI APOIO ADMINISTRATIVO E OPERACIONAL LTDA", dados
+
+
+# ---------------------------------------------------------------------------
+# O mesmo produto escrito de jeito diferente vai para o mesmo material
+# ---------------------------------------------------------------------------
+
+def teste_mesmo_produto_com_termos_diferentes():
+    iguais = [("Sabão em pó", "SABÃO EM PÓ"), ("Água sanitária", "AGUA SANITARIA"),
+              ("Detergente", "Detergente líquido"), ("Desinfetante floral", "Desinfetante"),
+              ("Limpador multiuso (tipo veja similar)", "Limpador multiuso"),
+              ("Pano de chão", "Pano para limpeza do chão"), ("Detergente liquida", "Detergente líquido"),
+              ("Esponja dupla face", "ESPONJA DUPLA FACE"), ("Palha de aço", "Palha de aço (pacote)"),
+              ("Caderno brochura 96fls", "Cademo brochura 96fls"), ("Sacos de lixo", "Saco para lixo")]
+    for a, b in iguais:
+        assert ln.mesmo_produto(a, b) and ln.mesmo_produto(b, a), (a, b)
+
+
+def teste_produtos_diferentes_nao_se_juntam():
+    diferentes = [("Papel Cartao 48x66 Rosa c/20Fls", "Papel Cartao 48x66 Preto c/20Fls"),     # cor
+                  ("Sacos p/ lixo capacidade p/ 100 litros", "Sacos p/ lixo capacidade p/ 50 litros"),  # número
+                  ("Sabão em pedra", "Sabão em barra"), ("Palha de aço", "Esponja lã de aço"),
+                  ("Esponja dupla face", "Esponja lã de aço"), ("Pano branco de prato", "Pano de chão"),
+                  ("Papel", "Papel Cartao 48x66 Rosa c/20Fls"),                               # palavra solta x nome comprido
+                  ("Papel Cartao 48x66", "Papel Cartao 48x66 Rosa"),                          # só a cor a mais
+                  ("Flanela de algodão", "Flanela de algodão branca"), ("Cola branca 90g", "Cola branca 500g"),
+                  ("Bobina De T.N.T Santa Fe 40g Amarelo 50m 044", "Bobina De T.N.T Santa Fe 40g Azul Cel. 50m 028"),
+                  ("Tinta Guache 250ml N°507 VermFogo", "Tinta Guache 250ml N°511 VerdBand")]
+    for a, b in diferentes:
+        assert not ln.mesmo_produto(a, b), (a, b)
+
+
+def teste_planejar_destinos():
+    existentes = [{"id": "m1", "nome": "Sabão em pó", "unidade": "unidade", "ativo": True}]
+    itens = [{"descricao": "Sabão em pó"}, {"descricao": "Detergente"}, {"descricao": "Detergente líquido"},
+             {"descricao": "Papel Cartao Rosa"}, {"descricao": "Papel Cartao Preto"},
+             {"descricao": "Detergente", "separado": True}, {"descricao": "Água sanitária"}]
+    d = ln.planejar_destinos(itens, existentes)
+    assert d[0] == ("existente", existentes[0]), d
+    assert d[1] == ("novo",) and d[2] == ("junta", 1, "Detergente"), d             # o 2º detergente se junta ao 1º
+    assert d[3] == ("novo",) and d[4] == ("novo",), d                                # cores diferentes: dois materiais
+    assert d[5] == ("junta", 1, "Detergente"), d                                     # "separado" mas com nome IGUAL junta
+    assert d[6] == ("novo",), d
+    itens[2]["separado"] = True                                                      # "Detergente líquido": não juntar
+    d = ln.planejar_destinos(itens, existentes)
+    assert d[2] == ("novo",), d
+
+
+def teste_nomes_da_nota_fiscal_real_nao_se_juntam():
+    """Os produtos da DANFE de exemplo (cores, tamanhos, códigos) continuam todos separados."""
+    nomes = ["Bobina De T.N.T Santa Fe 40g Amarelo 50m 044", "Bobina De T.N.T Santa Fe 40g Azul Cel. 50m 028",
+             "Bobina De T.N.T Santa Fe 40g Bege 50m 024", "Cola Compactor Branca 090gr Polar c/12un (12x12)",
+             "Cola P/Isopor Compactor Polar 90gr c/12un (12x12)", "Papel Cartao 48x66 Amarelo c/20Fls (M5)",
+             "Papel Cartao 48x66 Azul Escuro c/20Fls", "Papel Duplex 48x66 Colorset Amarelo c/20Fls (M10)",
+             "Papel Duplex 48x66 Colorset Rosa c/20Fls (M10)", "Fita Kraft Adere 19x50m Marrom (6x12) C/12 (M6)",
+             "Fita Kraft Adere 50x50m Marrom 432/326 (06x04) c/4 (M6)", "Tinta Guache Acrilex 250ml N°507 VermFogo",
+             "Tinta Guache Acrilex 250ml N°511 VerdBand", "Papel Fotografico 50Fls 180g (22x50)",
+             "Papel Fotografico Auto Adesivo 50Fls 130g (24x50)", "Lapis de Cor Leo&Leo 12Cor. Sextavado",
+             "Lapis Preto Leo&Leo N°2 S/Bor Sext4683c/144"]
+    d = ln.planejar_destinos([{"descricao": n} for n in nomes], [])
+    assert all(x == ("novo",) for x in d), [(nomes[i], x) for i, x in enumerate(d) if x != ("novo",)]
+
+
+def teste_so_pergunta_o_que_e_parecido_mas_nao_igual():
+    """Nome igual (acento, plural, parênteses) junta sozinho; só palavra a mais ou letra trocada vira pergunta."""
+    existentes = [{"id": "m1", "nome": "Pano de chão", "unidade": "unidade", "ativo": True}]
+    itens = [{"descricao": "Água sanitária"}, {"descricao": "Detergente"}, {"descricao": "Limpador multiuso (tipo veja similar)"},
+             {"descricao": "Detergente líquido"}, {"descricao": "Limpador multiuso"}, {"descricao": "Agua sanitária"},
+             {"descricao": "Desinfetante floral"}, {"descricao": "Desinfetante"}, {"descricao": "Pano para limpeza do chão"},
+             {"descricao": "Papel Cartao Rosa"}, {"descricao": "Papel Cartao Preto"}]
+    duvidas = ln.achar_duvidas(itens, existentes)
+    assert [(d["item"]["descricao"], d["nome_destino"]) for d in duvidas] == [
+        ("Detergente líquido", "Detergente"), ("Desinfetante", "Desinfetante floral"),
+        ("Pano para limpeza do chão", "Pano de chão")], [(d["item"]["descricao"], d["nome_destino"]) for d in duvidas]
+    assert duvidas[0]["origem"] is itens[1] and duvidas[2]["origem"] is None and duvidas[2]["destino"][0] == "existente"
+    # quem respondeu "não" (separado) deixa de ser dúvida e vira material à parte
+    itens[3]["separado"] = True
+    assert [d["item"]["descricao"] for d in ln.achar_duvidas(itens, existentes)] == ["Desinfetante", "Pano para limpeza do chão"]
+    assert ln.planejar_destinos(itens, existentes)[3] == ("novo",)
+
+
+def teste_sem_duvidas_na_nota_fiscal_real():
+    nomes = ["Papel Cartao 48x66 Amarelo c/20Fls (M5)", "Papel Cartao 48x66 Azul Escuro c/20Fls",
+             "Bobina De T.N.T Santa Fe 40g Amarelo 50m 044", "Bobina De T.N.T Santa Fe 40g Azul Cel. 50m 028",
+             "Cola Compactor Branca 090gr Polar c/12un (12x12)", "Cola P/Isopor Compactor Polar 90gr c/12un (12x12)"]
+    assert ln.achar_duvidas([{"descricao": n} for n in nomes], []) == []
 
 
 if __name__ == "__main__":

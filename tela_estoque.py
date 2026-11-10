@@ -755,12 +755,12 @@ class DialogoLendoNota(_Dialogo):
     """Mostra o andamento enquanto o PDF da nota fiscal é lido (leva 1 a 2 minutos)."""
 
     def __init__(self, pai, leitor, caminho):
-        super().__init__(pai, "Lendo a nota fiscal")
+        super().__init__(pai, "Lendo o PDF")
         self.cancelado = False
         self.fila = queue.Queue()
         self.protocol("WM_DELETE_WINDOW", self._cancelar)
         self.bind("<Escape>", lambda e: self._cancelar())
-        tk.Label(self.interno, text="Lendo a nota fiscal…", bg=COR_CARTAO, fg=COR_AZUL_ESCURO,
+        tk.Label(self.interno, text="Lendo o PDF…", bg=COR_CARTAO, fg=COR_AZUL_ESCURO,
                  font=(FONTE, 13, "bold")).pack(anchor="w")
         tk.Label(self.interno, text=os.path.basename(caminho), bg=COR_CARTAO, fg=COR_TEXTO_FRACO,
                  font=(FONTE, 9)).pack(anchor="w", pady=(2, 10))
@@ -770,7 +770,7 @@ class DialogoLendoNota(_Dialogo):
         self.barra = ttk.Progressbar(self.interno, mode="indeterminate", length=440)
         self.barra.pack(fill="x", pady=(10, 0))
         self.barra.start(14)
-        tk.Label(self.interno, text="O programa olha a imagem da nota como uma pessoa olharia. Pode levar um ou dois "
+        tk.Label(self.interno, text="O programa olha a imagem do documento como uma pessoa olharia. Pode levar um ou dois "
                  "minutos; é só esperar.", bg=COR_CARTAO, fg=COR_TEXTO_FRACO, font=(FONTE, 9), anchor="w",
                  justify="left", wraplength=440).pack(anchor="w", pady=(10, 0))
         linha = tk.Frame(self.interno, bg=COR_CARTAO)
@@ -861,15 +861,104 @@ class DialogoItemNota(_Dialogo):
         return super().abrir(self._foco)
 
 
+class DialogoItensIguais(_Dialogo):
+    """
+    Pergunta, um par por vez, sobre os produtos que parecem ser o mesmo (mas não têm o nome igual).
+    Dois botões, só: Juntar e Não juntar. Ao lado, uma caixa para marcar: "Fazer o mesmo com todos os que
+    faltam" (a resposta vale para este e para o resto). Devolve a lista de respostas (True = juntar), uma por dúvida.
+    """
+
+    def __init__(self, pai, duvidas):
+        super().__init__(pai, "Estes produtos são iguais?")
+        self.duvidas = duvidas
+        self.respostas = []
+        tk.Label(self.interno, text="Estes dois produtos são o mesmo?", bg=COR_CARTAO, fg=COR_AZUL_ESCURO,
+                 font=(FONTE, 14, "bold")).pack(anchor="w")
+        self.lbl_andamento = tk.Label(self.interno, text="", bg=COR_CARTAO, fg=COR_TEXTO_FRACO, font=(FONTE, 10, "bold"))
+        self.lbl_andamento.pack(anchor="w", pady=(2, 10))
+
+        quadro = tk.Frame(self.interno, bg=COR_LINHA, highlightthickness=1, highlightbackground=COR_BORDA)
+        quadro.pack(fill="x")
+        miolo = tk.Frame(quadro, bg=COR_LINHA)
+        miolo.pack(fill="x", padx=16, pady=12)
+        self.var_este, self.var_igual = tk.StringVar(), tk.StringVar()
+        self.var_onde = tk.StringVar()
+        tk.Label(miolo, text="Na lista que você leu:", bg=COR_LINHA, fg=COR_TEXTO_FRACO, font=(FONTE, 9, "bold"),
+                 anchor="w").pack(anchor="w")
+        tk.Label(miolo, textvariable=self.var_este, bg=COR_LINHA, fg=COR_TEXTO, font=(FONTE, 12, "bold"), anchor="w",
+                 justify="left", wraplength=560).pack(anchor="w", pady=(0, 10))
+        tk.Label(miolo, textvariable=self.var_onde, bg=COR_LINHA, fg=COR_TEXTO_FRACO, font=(FONTE, 9, "bold"),
+                 anchor="w").pack(anchor="w")
+        tk.Label(miolo, textvariable=self.var_igual, bg=COR_LINHA, fg=COR_TEXTO, font=(FONTE, 12, "bold"), anchor="w",
+                 justify="left", wraplength=560).pack(anchor="w")
+
+        self.var_pergunta = tk.StringVar()
+        tk.Label(self.interno, textvariable=self.var_pergunta, bg=COR_CARTAO, fg=COR_TEXTO, font=(FONTE, 10, "bold"),
+                 anchor="w", justify="left", wraplength=580).pack(anchor="w", pady=(12, 8))
+        linha = tk.Frame(self.interno, bg=COR_CARTAO)
+        linha.pack(fill="x")
+        Botao(linha, "Juntar", lambda: self._responder(True), estilo="principal", pad_x=22, pad_y=9).pack(side="left")
+        Botao(linha, "Não juntar", lambda: self._responder(False), estilo="azul", pad_x=18, pad_y=9).pack(side="left", padx=(8, 0))
+        self.var_todos = tk.BooleanVar(value=False)
+        self.caixa_todos = Chip(linha, "Fazer o mesmo com todos os que faltam", self.var_todos)
+        self.caixa_todos.pack(side="left", padx=(18, 0))
+        rodape = tk.Frame(self.interno, bg=COR_CARTAO)
+        rodape.pack(fill="x", pady=(10, 0))
+        Botao(rodape, "Voltar à conferência", self.destroy, estilo="tracejado", pad_y=6, pad_x=14, raio=8,
+              fonte=(FONTE, 9, "bold")).pack(side="left")
+        self._mostrar()
+
+    @staticmethod
+    def _quantidade(item):
+        return "{} {}".format(texto_quantidade(item["quantidade"]), item["unidade"]) if item.get("quantidade") else "?"
+
+    def _mostrar(self):
+        n = len(self.respostas)
+        d = self.duvidas[n]
+        item = d["item"]
+        self.lbl_andamento.configure(text="Pergunta {} de {}".format(n + 1, len(self.duvidas)))
+        self.var_todos.set(False)
+        if n + 1 < len(self.duvidas):                       # a caixa só faz sentido se ainda há outras perguntas
+            self.caixa_todos.pack(side="left", padx=(18, 0))
+        else:
+            self.caixa_todos.pack_forget()
+        tamanho = d.get("motivo") == "tamanho"
+        este_tam = "  [{}]".format(d["tamanho_item"]) if d.get("tamanho_item") else ""
+        outro_tam = "  [{}]".format(d["tamanho_outro"]) if d.get("tamanho_outro") else ""
+        self.var_este.set("{}{}   —   {}".format(item["descricao"], este_tam, self._quantidade(item)))
+        if d["origem"] is not None:
+            self.var_onde.set(("Mesmo nome, mas o TAMANHO da embalagem é diferente. Este já está na lista:" if tamanho else
+                               "Parece ser o mesmo que este (também na lista):"))
+            self.var_igual.set("{}{}   —   {}".format(d["nome_destino"], outro_tam, self._quantidade(d["origem"])))
+        else:
+            self.var_onde.set(("Mesmo nome, mas o TAMANHO da embalagem é diferente. Este já é conhecido:" if tamanho else
+                               "Parece ser o mesmo que este (já está no seu estoque):"))
+            self.var_igual.set(d["nome_destino"] + outro_tam)
+        self.var_pergunta.set(
+            "É o mesmo produto, mesmo com o tamanho diferente? (se juntar, as quantidades se somam)" if tamanho else
+            "Juntar os dois num só item do estoque? (as quantidades se somam)")
+
+    def _responder(self, juntar):
+        self.respostas.append(bool(juntar))
+        if self.var_todos.get():                            # caixa marcada: a mesma resposta para os que faltam
+            self.respostas += [bool(juntar)] * (len(self.duvidas) - len(self.respostas))
+        if len(self.respostas) >= len(self.duvidas):
+            self.resultado = list(self.respostas)
+            self.destroy()
+        else:
+            self._mostrar()
+
+
 class DialogoNotaLida(_Dialogo):
     """
     A lista lida da nota fiscal, para a pessoa CONFERIR antes de entrar no estoque: o leitor de texto
     erra de vez em quando, então embaixo aparece a imagem da linha da nota do produto escolhido.
     """
 
-    def __init__(self, pai, livro, resultado):
-        super().__init__(pai, "Conferir a nota lida")
-        self.livro, self.itens, self.nota = livro, resultado["itens"], resultado["nota"]
+    def __init__(self, pai, livro, resultado, catalogo=None):
+        super().__init__(pai, "Conferir o que foi lido")
+        self.livro, self.itens, self.notas = livro, resultado["itens"], resultado["notas"]
+        self.catalogo = catalogo
         self._existentes = livro.materiais(incluir_ocultos=True)
         for item in self.itens:
             item["incluir"] = bool(item["descricao"]) and item["quantidade"] is not None
@@ -877,24 +966,22 @@ class DialogoNotaLida(_Dialogo):
         self.minsize(900, 520)
         tela_baixa = self.winfo_screenheight() < 900
 
-        tk.Label(self.interno, text="Conferir a nota lida", bg=COR_CARTAO, fg=COR_AZUL_ESCURO,
+        tk.Label(self.interno, text="Conferir o que foi lido", bg=COR_CARTAO, fg=COR_AZUL_ESCURO,
                  font=(FONTE, 13, "bold")).pack(anchor="w")
-        partes = [p for p in (self.nota.get("fornecedor"), "Nota " + self.nota["numero"] if self.nota.get("numero") else "",
-                              self.nota.get("emissao")) if p]
         self.lbl_resumo = tk.Label(self.interno, text="", bg=COR_CARTAO, fg=COR_TEXTO, font=(FONTE, 10, "bold"),
-                                   anchor="w", justify="left")
+                                   anchor="w", justify="left", wraplength=1000)
         self.lbl_resumo.pack(anchor="w", pady=(4, 0))
-        self._cabecalho = "  ·  ".join(partes)
-        tk.Label(self.interno, text="O leitor pode errar. Clique num produto para ver a linha da nota logo abaixo e "
+        self._cabecalho = "  |  ".join(n["rotulo"] for n in self.notas if n.get("rotulo"))
+        tk.Label(self.interno, text="O leitor pode errar. Clique num produto para ver a linha do documento logo abaixo e "
                  "compare. Corrija o que estiver errado (dois cliques) e tire o que não deve entrar no estoque.",
                  bg=COR_CARTAO, fg=COR_TEXTO_FRACO, font=(FONTE, 9), anchor="w", justify="left",
                  wraplength=1000).pack(anchor="w", pady=(2, 8))
         quadro, self.tabela = _tabela(self.interno, [
-            ("entra", "Entra?", 70, "center", False), ("nome", "Material", 430, "w", True),
+            ("entra", "Entra?", 70, "center", False), ("nome", "Material", 380, "w", True),
             ("unidade", "Unidade", 90, "w", False), ("qtd", "Quantidade", 100, "center", False),
-            ("obs", "Observação", 420, "w", False)], linhas=8 if tela_baixa else 11)
+            ("obs", "Observação", 500, "w", False)], linhas=8 if tela_baixa else 11)
         quadro.pack(fill="both", expand=True)
-        tk.Label(self.interno, text="Como está na nota (linha do produto escolhido):", bg=COR_CARTAO,
+        tk.Label(self.interno, text="Como está no documento (linha do produto escolhido):", bg=COR_CARTAO,
                  fg=COR_TEXTO_FRACO, font=(FONTE, 9, "bold"), anchor="w").pack(anchor="w", pady=(8, 2))
         self.tela = tk.Canvas(self.interno, height=50, bg="#FFFFFF", highlightthickness=1,
                               highlightbackground=COR_BORDA)
@@ -922,15 +1009,44 @@ class DialogoNotaLida(_Dialogo):
 
     # -- a lista ---------------------------------------------------------------------
 
+    def _recalcular(self):
+        """Para onde vai cada produto que entra: material que já existe, junto com outro da lista, ou material novo."""
+        incluidos = [i for i in self.itens if i["incluir"]]
+        self._destino = {id(i): d for i, d in zip(incluidos, ln.planejar_destinos(incluidos, self._existentes,
+                                                                                    self.catalogo))}
+        self._duvida = {id(d["item"]): d for d in ln.achar_duvidas(incluidos, self._existentes, self.catalogo)}
+
     def _situacao(self, item):
-        existente = ln.achar_igual(item["descricao"], self._existentes)
+        destino = self._destino.get(id(item))
         partes = []
-        if existente:
-            partes.append("já cadastrado" + (" (oculto)" if not existente.get("ativo", True) else ""))
-            if existente["unidade"] != item["unidade"]:
-                partes.append("no estoque a unidade é " + existente["unidade"])
+        duvida_tamanho = self._duvida.get(id(item))
+        if destino is None:
+            partes.append("não entra")
+        elif duvida_tamanho is not None and duvida_tamanho["motivo"] == "tamanho":
+            partes.append("mesmo nome de “{}”, mas tamanho diferente (vou perguntar)".format(duvida_tamanho["nome_destino"]))
+        elif destino[0] == "existente":
+            m = destino[1]
+            if id(item) in self._duvida:
+                partes.append("parece “{}” do estoque (vou perguntar)".format(m["nome"]))
+            else:
+                partes.append("já cadastrado como “{}”".format(m["nome"]) + (" (oculto)" if not m.get("ativo", True) else ""))
+            if m["unidade"] != item["unidade"]:
+                partes.append("a unidade no estoque é " + m["unidade"])
+        elif destino[0] == "junta":
+            if id(item) in self._duvida:
+                partes.append("parece “{}” da lista (vou perguntar)".format(destino[2]))
+            else:
+                partes.append("junta com “{}”".format(destino[2]))
         else:
             partes.append("material novo")
+        if item.get("reconhecido") == "código":
+            partes.append("reconhecido pelo código do fornecedor")
+        elif item.get("reconhecido") == "catálogo":
+            partes.append("reconhecido no catálogo")
+        if item.get("separado"):
+            partes.append("separado (você escolheu)")
+        if item.get("embalagem"):
+            partes.append("embalagem: " + item["embalagem"])
         if item["avisos"]:
             partes.append("CONFERIR: " + ", ".join(item["avisos"]))
         return " · ".join(partes)
@@ -946,23 +1062,34 @@ class DialogoNotaLida(_Dialogo):
         return ("baixo",) if item["avisos"] else ()
 
     def _preencher(self):
+        self._recalcular()
         _limpar_tabela(self.tabela)
         for n, item in enumerate(self.itens):
             self.tabela.insert("", "end", iid=str(n), values=self._valores(item), tags=self._tags(item))
         self._atualizar_resumo()
 
     def _atualizar_linha(self, n):
-        item = self.itens[n]
-        self.tabela.item(str(n), values=self._valores(item), tags=self._tags(item))
+        """Uma mudança pode juntar ou separar outros produtos da lista: refaz a conta e atualiza todas as linhas."""
+        self._recalcular()
+        for k, item in enumerate(self.itens):
+            self.tabela.item(str(k), values=self._valores(item), tags=self._tags(item))
         self._atualizar_resumo()
 
     def _atualizar_resumo(self):
         entram = sum(1 for i in self.itens if i["incluir"])
         conferir = sum(1 for i in self.itens if i["incluir"] and i["avisos"])
         texto = _plural(len(self.itens), "produto lido", "produtos lidos")
+        destinos = [self._destino[id(i)] for i in self.itens if i["incluir"] and id(i) in self._destino]
+        materiais = sum(1 for d in destinos if d[0] == "novo") + len({d[1]["id"] for d in destinos if d[0] == "existente"})
+        if entram:
+            texto += " · entram em {}".format(_plural(materiais, "material", "materiais"))
+            if entram > materiais:
+                texto += " ({} juntam com outro igual)".format(entram - materiais)
+            if self._duvida:
+                texto += " · vou perguntar sobre {} parecido(s)".format(len(self._duvida))
         if conferir:
             texto += " · {} para conferir (em laranja)".format(conferir)
-        self.lbl_resumo.configure(text=(self._cabecalho + "   —   " if self._cabecalho else "") + texto)
+        self.lbl_resumo.configure(text=(self._cabecalho + "\n" if self._cabecalho else "") + texto)
         self.botao_ok.definir_texto("Adicionar {} à lista de entrada".format(entram) if entram else
                                     "Adicionar à lista de entrada")
         self.botao_ok.definir_ativo(entram > 0)
@@ -1002,6 +1129,26 @@ class DialogoNotaLida(_Dialogo):
         item["incluir"] = not item["incluir"]
         self._atualizar_linha(n)
 
+    @staticmethod
+    def _aplicar_resposta(duvida, juntar):
+        """Guarda no item o que a pessoa respondeu (os dois botões: Juntar / Não juntar)."""
+        item = duvida["item"]
+        if duvida["motivo"] == "tamanho":
+            item["tamanho_resolvido"] = True
+            produto = item.pop("tamanho_diferente_de", None)
+            if juntar:                                             # é o mesmo, mesmo com outro tamanho
+                if duvida["destino"][0] == "catalogo" and produto is not None:
+                    item.update(descricao=produto["nome"], unidade=produto["unidade"] or item["unidade"],
+                                catalogo=produto["id"], reconhecido="catálogo")
+            else:                                                  # outro produto: o tamanho entra no nome
+                if duvida.get("tamanho_item"):
+                    item["descricao"] = "{} - {}".format(item["descricao"], duvida["tamanho_item"])
+                item.update(catalogo=None, reconhecido=None, variante=True)
+        else:
+            item["separado"] = not juntar
+            if not juntar:
+                item["separado_de"] = duvida["nome_destino"]
+
     def _editar(self):
         n = self._selecionado()
         if n is None:
@@ -1018,6 +1165,14 @@ class DialogoNotaLida(_Dialogo):
         if not escolhidos:
             self.erro("Nenhum produto marcado para entrar.")
             return
+        duvidas = ln.achar_duvidas(escolhidos, self._existentes)
+        if duvidas:                                            # pergunta, uma vez só, sobre os que parecem iguais
+            respostas = DialogoItensIguais(self, duvidas).abrir()
+            if respostas is None:                              # voltou: continua na conferência
+                return
+            for duvida, juntar in zip(duvidas, respostas):
+                self._aplicar_resposta(duvida, juntar)
+            self._atualizar_linha(0)
         self.resultado = escolhidos
         self.destroy()
 
@@ -1283,7 +1438,7 @@ class PainelEstoque(tk.Frame):
         botoes = tk.Frame(c1, bg=COR_CARTAO)
         botoes.pack(fill="x", pady=(12, 0))
         Botao(botoes, "Adicionar à lista  ›", self._ent_adicionar, estilo="azul", pad_y=8).pack(side="left")
-        Botao(botoes, "Ler nota fiscal (PDF)", self._ent_ler_pdf, estilo="tracejado", pad_y=8).pack(side="left", padx=(10, 0))
+        Botao(botoes, "Ler nota ou lista (PDF)", self._ent_ler_pdf, estilo="tracejado", pad_y=8).pack(side="left", padx=(10, 0))
 
         externo, c2, canto = cartao(f, "Lista desta entrada", 2)
         externo.grid(row=0, column=1, sticky="new", padx=(8, 0))
@@ -1313,10 +1468,10 @@ class PainelEstoque(tk.Frame):
         """Lê o PDF (escaneado ou não) de uma nota fiscal e põe os produtos na lista de entrada."""
         ok, motivo = ln.disponivel()
         if not ok:
-            self._aviso("Não dá para ler nota fiscal neste computador: {}.".format(motivo), "erro")
+            self._aviso("Não dá para ler PDF de nota ou lista neste computador: {}.".format(motivo), "erro")
             return
         from tkinter import filedialog
-        caminho = filedialog.askopenfilename(parent=self.winfo_toplevel(), title="Escolha o PDF da nota fiscal",
+        caminho = filedialog.askopenfilename(parent=self.winfo_toplevel(), title="Escolha o PDF da nota fiscal ou da lista de material",
                                              filetypes=[("PDF", "*.pdf"), ("Todos os arquivos", "*.*")])
         if not caminho:
             return
@@ -1330,41 +1485,59 @@ class PainelEstoque(tk.Frame):
         if "erro" in lido:
             self._aviso(lido["erro"], "erro")
             return
-        escolhidos = DialogoNotaLida(self, self.livro, lido).abrir()
+        catalogo = getattr(self.app, "catalogo", None)
+        fornecedor = next((n["fornecedor_chave"] for n in lido["notas"] if n.get("fornecedor_chave")), "")
+        if catalogo is not None:
+            catalogo.recarregar()                                   # pode ter aprendido em outro computador
+            catalogo.aplicar(lido["itens"], fornecedor)             # o que o catálogo conhece já vem com o nome padrão
+        escolhidos = DialogoNotaLida(self, self.livro, lido, catalogo).abrir()
         if not escolhidos:
             self._aviso("Nada foi colocado na lista.", "info")
             return
-        self._ent_receber_da_nota(escolhidos, lido["nota"])
+        self._ent_receber_da_nota(escolhidos, lido["notas"], fornecedor)
 
-    def _ent_receber_da_nota(self, itens, nota):
+    def _ent_receber_da_nota(self, itens, notas, fornecedor=""):
         """Cadastra o que ainda não existe e põe tudo na lista de entrada (ainda falta Registrar entrada)."""
+        catalogo = getattr(self.app, "catalogo", None)
         materiais = self.livro.materiais(incluir_ocultos=True)
+        destinos = ln.planejar_destinos(itens, materiais, catalogo)     # a mesma conta que a tela mostrou
+        criados, aprendidos = {}, []
         novos = reativados = 0
-        for item in itens:
-            existente = ln.achar_igual(item["descricao"], materiais)
-            if existente is None:
+        for n, (item, destino) in enumerate(zip(itens, destinos)):
+            if destino[0] == "existente":
+                mid = destino[1]["id"]
+                if not destino[1].get("ativo", True):
+                    self.livro.editar_material(mid, ativo=True)
+                    reativados += 1
+            elif destino[0] == "junta" and destino[1] in criados:
+                mid = criados[destino[1]]
+            else:
                 try:
                     mid = self.livro.cadastrar_material(item["descricao"], item["unidade"], 0)
                 except ErroEstoque as erro:
                     self._aviso(str(erro), "erro")
                     continue
-                materiais.append(self.livro.material(mid))
+                criados[n] = mid
                 novos += 1
-            else:
-                mid = existente["id"]
-                if not existente.get("ativo", True):
-                    self.livro.editar_material(mid, ativo=True)
-                    reativados += 1
             self._somar(self.ent_itens, mid, item["quantidade"])
-        partes = [p for p in (nota.get("fornecedor"), "NF " + nota["numero"] if nota.get("numero") else "",
-                              nota.get("emissao")) if p]
-        if partes and not self.var_ent_obs.get().strip():
-            self.var_ent_obs.set(" – ".join(partes))
+            material = self.livro.material(mid)
+            aprendidos.append((item, material["nome"], material["unidade"]))
+        if catalogo is not None:
+            try:                                                    # o catálogo aprende o que a pessoa confirmou
+                for item, nome, unidade in aprendidos:
+                    catalogo.aprender(item, nome, unidade, self.chave, fornecedor)
+                    if item.get("separado_de"):
+                        catalogo.marcar_diferentes(item["descricao"], item["separado_de"])
+            except OSError as erro:
+                self._aviso("A entrada foi para a lista, mas não consegui gravar o catálogo: {}".format(erro), "erro")
+        rotulos = [n["rotulo"] for n in notas if n.get("rotulo")]
+        if rotulos and not self.var_ent_obs.get().strip():
+            self.var_ent_obs.set("; ".join(rotulos))
         self._atualizar_lista_entrada()
         extra = "{} cadastrado(s) agora".format(novos) if novos else "todos já estavam cadastrados"
         if reativados:
             extra += ", {} voltou(aram) a ser usado(s)".format(reativados)
-        self._aviso("Nota lida: {} entraram na lista ({}). Confira as quantidades e clique em Registrar entrada."
+        self._aviso("PDF lido: {} entraram na lista ({}). Confira as quantidades e clique em Registrar entrada."
                     .format(_plural(len(itens), "produto", "produtos"), extra), "ok")
 
     def _ent_escolheu(self, material):

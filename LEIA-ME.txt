@@ -76,14 +76,31 @@ DECLARAÇÕES ESCOLARES - como usar
      última opção cadastra na hora. Digite a quantidade e clique em "Adicionar à
      lista". Quando a lista estiver completa, clique em "Registrar entrada": o
      estoque soma sozinho.
-     Para dar entrada de uma NOTA FISCAL, clique em "Ler nota fiscal (PDF)" e
-     escolha o PDF da nota (pode ser escaneada). O programa lê a tabela de
-     produtos (isso leva cerca de 1 minuto por página) e abre uma lista para
+     Para dar entrada de uma NOTA FISCAL ou de uma LISTA DE MATERIAL (como a
+     lista mensal de material de limpeza), clique em "Ler nota ou lista (PDF)"
+     e escolha o PDF (pode ser escaneado). O programa lê a tabela de produtos
+     (de 10 segundos a 1 minuto por página) e abre uma lista para
      você CONFERIR: clique num produto para ver embaixo a linha da nota, corrija
      o que o leitor errou (dois cliques) e tire o que não deve entrar. O que
-     ainda não existe no estoque é cadastrado sozinho. Os produtos vão para a
+     ainda não existe no estoque é cadastrado sozinho. O mesmo produto escrito de
+     jeito diferente vai para o MESMO material e as quantidades se somam. O que tem
+     nome igual (mesmo com acento, maiúscula ou embalagem diferente, como "Sabão em
+     pó c/ 500" e "Sabão em pó pacote 500g") o programa junta sozinho. O que tem o
+     nome só PARECIDO ("Detergente" e "Detergente líquido") ele pergunta, um par por
+     vez, ao clicar em "Adicionar": responda "Juntar" ou "Não juntar"; se marcar a
+     caixa "Fazer o mesmo com todos os que faltam", a resposta vale para as outras
+     perguntas também. Se o nome for igual mas o TAMANHO da embalagem for diferente
+     (sabão em pó de 500 g e de 250 g), ele pergunta do mesmo jeito. Produtos que só mudam de cor ou de número ("Papel Rosa" e "Papel
+     Preto", sacos de 100 e de 50 litros) nunca são juntados. Os produtos vão para a
      lista de entrada; confira e clique em "Registrar entrada". Esse recurso
      usa um leitor de texto que precisa estar instalado no computador.
+     O programa tem um CATÁLOGO de materiais: já vem com os produtos das listas de
+     material de limpeza da SEMED e vai aprendendo. O que ele reconhece entra com o
+     nome e a unidade padrão; nas notas fiscais ele guarda o código que cada
+     fornecedor usa e, na nota seguinte do mesmo fornecedor, reconhece pelo código.
+     Cada "Juntar" e "Não juntar" que você responde também fica guardado: a mesma
+     pergunta não volta. O catálogo fica na pasta do estoque, então os dois
+     computadores da escola dividem o que foi aprendido.
    - Saída de material: escolha quem recebe (digite o nome e clique; quem ainda
      não está cadastrado é cadastrado na hora e fica salvo), depois os materiais
      e as quantidades. A coluna "Fica em estoque" mostra o que sobra. O programa

@@ -33,6 +33,7 @@ import tkinter as tk
 import tkinter.font as tkfont
 from tkinter import ttk, filedialog, messagebox
 
+import catalogo
 import estoque
 import tela_estoque
 
@@ -1921,6 +1922,7 @@ class Aplicacao(tk.Tk):
         base = self.cfg.get("pasta_estoque") or os.path.join(pasta_dados(), "estoque")
         pc = estoque.identificar_pc(pasta_dados())
         self.livros = {chave: estoque.Livro(os.path.join(base, chave), pc) for chave in ("pedagogico", "limpeza")}
+        self.catalogo = catalogo.Catalogo(os.path.join(base, "catalogo"), pc)     # produtos que o programa conhece
 
     def _atualizar_selos(self):
         """Selo laranja na aba: só aparece quando há material pendente (já na lista de entrada ou de
