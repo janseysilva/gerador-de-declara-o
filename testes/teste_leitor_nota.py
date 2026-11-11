@@ -310,6 +310,37 @@ def teste_sem_duvidas_na_nota_fiscal_real():
     assert ln.achar_duvidas([{"descricao": n} for n in nomes], []) == []
 
 
+def teste_unidade_escrita_de_outro_jeito_e_a_mesma():
+    mesmo = lambda a, b: ln.chave_produto(a) == ln.chave_produto(b)                  # noqa: E731
+    assert mesmo("Sabão em pó 500g", "Sabão em pó 500 g") and mesmo("Sabão em pó - 500 g", "Sabão em pó 500 gramas")
+    assert mesmo("Saco de lixo 100 litros", "Saco de lixo 100 L") and mesmo("Arroz 1 quilo", "Arroz 1 kg")
+    assert not mesmo("Sabão em pó 500 g", "Sabão em pó 1 kg") and not mesmo("Saco de lixo 100 L", "Saco de lixo 50 L")
+    assert ln.chave_produto("Papel A4") != ln.chave_produto("Papel A3")                # número continua distinguindo
+
+
+def teste_nome_com_tamanho_no_estoque_casa_com_a_nota():
+    """O banco de materiais cadastra "Sabão em pó 500 g"; a nota traz "Sabão em pó" com a embalagem de 500 g."""
+    import tempfile
+    import catalogo as cat
+    c = cat.Catalogo(tempfile.mkdtemp(), "PC1")
+    estoque = [{"id": "m1", "nome": "Sabão em pó 500 g", "unidade": "pacote", "ativo": True, "saldo": 0, "minimo": 0}]
+
+    def item(desc, emb=""):
+        return {"descricao": desc, "embalagem": emb, "codigo": "", "unidade": "unidade", "quantidade": 2.0, "avisos": []}
+
+    def destino(desc, emb=""):
+        itens = [item(desc, emb)]
+        c.aplicar(itens)
+        return ln.planejar_destinos(itens, estoque, c)[0][0], ln.achar_duvidas(itens, estoque, c)
+
+    assert destino("SABAO EM PO", "500 g") == ("existente", [])                      # nome + tamanho = o material, sem perguntar
+    assert destino("Sabão em pó", "500g") == ("existente", [])
+    assert destino("Sabão em pó 500g") == ("existente", [])                          # o tamanho já vem no nome da nota
+    assert destino("Sabão em pó 500 gramas") == ("existente", [])
+    assert destino("Sabão em pó 1 kg")[0] == "novo"                                  # outro tamanho: outro material
+    assert destino("Sabão em pó", "1 kg")[0] == "novo"
+
+
 if __name__ == "__main__":
     testes = [(n, f) for n, f in sorted(globals().items()) if n.startswith("teste_") and callable(f)]
     for nome, funcao in testes:

@@ -6,6 +6,9 @@ vem nas notas fiscais e nas listas (PDF) mesmo escrito de outro jeito.
 Cada produto do catálogo tem: nome padrão, unidade, tamanho da embalagem, outros jeitos de escrever (apelidos)
 e os códigos que cada fornecedor usa na nota fiscal ("4448" = Almofada Pilot, para o fornecedor X).
 
+Há dois catálogos: este (que RECONHECE e APRENDE o que vem nas notas) e o CatalogoFederal, mais abaixo (um banco
+de materiais de fábrica, só para pesquisar e cadastrar na Entrada).
+
 De onde vem:
   - catalogo_base.json: vai junto com o programa (montado a partir das listas de material de limpeza da SEMED);
   - o que o programa aprende: cada entrada confirmada pela pessoa grava novos produtos, apelidos e códigos,
@@ -17,7 +20,9 @@ computadores da escola dividem o catálogo sem um apagar o do outro.
 
 import json
 import os
+import re
 import sys
+import unicodedata
 import uuid
 from datetime import datetime, timedelta
 
@@ -28,6 +33,90 @@ def caminho_base():
     """O catálogo que vai com o programa (ao lado do .py, ou dentro do .exe)."""
     pasta = getattr(sys, "_MEIPASS", None) or os.path.dirname(os.path.abspath(__file__))
     return os.path.join(pasta, "catalogo_base.json")
+
+
+def caminho_federal():
+    """O catálogo federal que vai com o programa (ao lado do .py, ou dentro do .exe)."""
+    pasta = getattr(sys, "_MEIPASS", None) or os.path.dirname(os.path.abspath(__file__))
+    return os.path.join(pasta, "catalogo_federal.json")
+
+
+def _normalizar(texto):
+    """Minúsculas, sem acento e com espaços simples (a mesma conta de estoque.normalizar)."""
+    sem = "".join(c for c in unicodedata.normalize("NFD", str(texto or "")) if unicodedata.category(c) != "Mn")
+    return re.sub(r"\s+", " ", sem.lower()).strip()
+
+
+def _palavras(texto_normalizado):
+    """As palavras de um texto já normalizado; hífen e barra separam ("limpa-vidros" = "limpa" + "vidros")."""
+    return [p for p in re.split(r"[\s\-/]+", texto_normalizado) if p]
+
+
+class CatalogoFederal:
+    """
+    O banco de materiais que vem de fábrica: os padrões do Catálogo de Materiais (CATMAT) do Governo Federal que
+    interessam a uma escola, mais alguns complementos do programa (folha de EVA, papel toalha...). Só LEITURA:
+    serve para a pessoa achar o material digitando, em vez de cadastrar tudo à mão. Quem escolhe um item daqui
+    na Entrada o cadastra no estoque (com o nome e a unidade do catálogo) na hora de adicionar à lista.
+    Cada produto tem nome, unidade usual, tipo (limpeza, pedagogico ou ambos) e apelidos de busca ("sulfite" acha
+    "Papel A4"). O que a pessoa separa por cor, tamanho ou cheiro tem uma opção para cada variação ("Cartolina
+    azul", "TNT preto", "Luva descartável M"). Montado por ferramentas/montar_catalogo_federal.py.
+    """
+
+    def __init__(self, arquivo=None):
+        self.arquivo = arquivo if arquivo is not None else caminho_federal()
+        self.entradas = []
+        self._texto = []
+        try:
+            with open(self.arquivo, encoding="utf-8") as f:
+                self.entradas = json.load(f).get("entradas", [])
+        except (OSError, ValueError, AttributeError):
+            self.entradas = []                                  # sem o arquivo o programa funciona, só sem sugestões
+        for e in self.entradas:
+            e.setdefault("unidade", "unidade")
+            e.setdefault("apelidos", [])
+            nome, apelidos = _normalizar(e["nome"]), _normalizar(" ".join(e["apelidos"]))
+            self._texto.append((nome, apelidos, tuple(_palavras(nome + " " + apelidos)), tuple(_palavras(nome))))
+
+    def __len__(self):
+        return len(self.entradas)
+
+    def buscar(self, texto, tipo=None, ja_cadastrados=(), limite=30):
+        """
+        Produtos cujo nome ou apelido tem todas as palavras digitadas. `tipo` é "limpeza" ou "pedagogico" (traz
+        também os "ambos"); `ja_cadastrados` são nomes (normalizados) que o estoque já tem e não devem aparecer
+        de novo. Os que começam com o que foi digitado vêm primeiro, depois os de nome, depois os só de apelido.
+        """
+        q = _normalizar(texto)
+        termos = _palavras(q)
+        if not termos:
+            return []
+        achados = []
+        for e, (nome, apelidos, palavras, palavras_do_nome) in zip(self.entradas, self._texto):
+            if tipo and e.get("tipo") not in (tipo, "ambos"):
+                continue
+            if nome in ja_cadastrados:
+                continue
+            # cada coisa digitada tem de ser o COMEÇO de uma palavra ("cola" não acha "sacola" nem "escolar")
+            if not all(any(p.startswith(t) for p in palavras) for t in termos):
+                continue
+            if nome.startswith(q):
+                posicao = 0
+            elif all(any(p.startswith(t) for p in palavras_do_nome) for t in termos):
+                posicao = 1
+            else:
+                posicao = 2
+            ordem = e.get("ordem", 0)
+            # os produtos vêm antes das suas variações (cor, tamanho): "Cartolina" e depois "Cartolina branca",
+            # "Cartolina azul"...; as variações ficam na ordem em que o catálogo as lista (as cores mais comuns primeiro)
+            achados.append((ordem > 0, posicao, e.get("origem") != "complemento", e.get("grupo", nome), ordem, nome, e))
+        achados.sort(key=lambda x: x[:6])
+        saida = []
+        for *_, e in achados[:limite]:
+            saida.append({"id": None, "do_catalogo": True, "nome": e["nome"], "unidade": e["unidade"],
+                          "tipo": e.get("tipo", ""), "categoria": e.get("categoria", ""), "saldo": 0.0,
+                          "situacao": ""})
+        return saida
 
 
 class Catalogo:

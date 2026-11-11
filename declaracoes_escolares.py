@@ -1923,6 +1923,7 @@ class Aplicacao(tk.Tk):
         pc = estoque.identificar_pc(pasta_dados())
         self.livros = {chave: estoque.Livro(os.path.join(base, chave), pc) for chave in ("pedagogico", "limpeza")}
         self.catalogo = catalogo.Catalogo(os.path.join(base, "catalogo"), pc)     # produtos que o programa conhece
+        self.catalogo_federal = catalogo.CatalogoFederal()                        # banco de materiais de fábrica
 
     def _atualizar_selos(self):
         """Selo laranja na aba: só aparece quando há material pendente (já na lista de entrada ou de

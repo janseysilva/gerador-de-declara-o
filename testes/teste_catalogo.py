@@ -159,6 +159,110 @@ def teste_arquivo_estragado_nao_derruba():
     assert c.aplicar([item("GIZ DE CERA")])[0]["descricao"] == "Giz de cera"
 
 
+def teste_catalogo_federal_tem_o_basico_de_escola():
+    f = cat.CatalogoFederal()
+    assert len(f) >= 400, len(f)
+    nomes = {e["nome"] for e in f.entradas}
+    for esperado in ("Tesoura", "Cola", "Giz de cera", "Massa de modelar", "Papel crepom", "Folha de EVA", "Tinta guache",
+                     "Detergente", "Sabão em pó", "Água sanitária", "Papel higiênico", "Vassoura", "Rodo", "Papel toalha"):
+        assert esperado in nomes, esperado
+    assert all(e["tipo"] in ("limpeza", "pedagogico", "ambos") for e in f.entradas)
+    assert len({e["nome"].lower() for e in f.entradas}) == len(f), "nomes repetidos no catálogo federal"
+
+
+def teste_federal_acha_pelo_jeito_de_falar():
+    f = cat.CatalogoFederal()
+    nomes = lambda q, t: [x["nome"] for x in f.buscar(q, t)]                # noqa: E731
+    assert "Papel A4 branco 75 g" in nomes("sulfite", "pedagogico")
+    assert "Saco de lixo 50 L" in nomes("saco de lixo", "limpeza")
+    assert nomes("massa de modelar", "pedagogico")[0] == "Massa de modelar"
+    assert "Desinfetante" in nomes("desinfetante", "limpeza")
+    assert "Folha de EVA" in nomes("eva", "pedagogico")
+    assert nomes("giz de cera", "pedagogico")[0] == "Giz de cera"
+    assert nomes("LAPIS DE COR", "pedagogico")[0] == "Lápis de cor"          # maiúscula e acento não atrapalham
+    assert nomes("papel toalha", "limpeza")[0] == "Papel toalha"             # o que começa igual vem primeiro
+
+
+def teste_federal_respeita_o_tipo_de_estoque():
+    f = cat.CatalogoFederal()
+    assert f.buscar("sulfite", "limpeza") == []                              # papel não aparece no estoque de limpeza
+    assert f.buscar("vassoura", "pedagogico") == []
+    assert any(x["nome"] == "Copo descartável" for x in f.buscar("copo", "pedagogico"))   # "ambos" aparece nos dois
+    assert any(x["nome"] == "Copo descartável" for x in f.buscar("copo", "limpeza"))
+    assert f.buscar("", "limpeza") == [] and f.buscar("   ", None) == []
+
+
+def teste_federal_nao_repete_o_que_ja_esta_cadastrado():
+    f = cat.CatalogoFederal()
+    todos = f.buscar("detergente", "limpeza")
+    assert any(x["nome"] == "Detergente" for x in todos)
+    sem = f.buscar("detergente", "limpeza", ja_cadastrados={"detergente"})
+    assert all(x["nome"] != "Detergente" for x in sem) and len(sem) == len(todos) - 1
+    s = todos[0]
+    assert s["do_catalogo"] is True and s["id"] is None and s["unidade"] and s["saldo"] == 0.0
+
+
+def teste_federal_tem_cada_cor_como_opcao():
+    f = cat.CatalogoFederal()
+    nomes = lambda q, t: [x["nome"] for x in f.buscar(q, t)]                # noqa: E731
+    cartolina = nomes("cartolina", "pedagogico")
+    assert cartolina[0] == "Cartolina", cartolina                           # o produto vem antes das cores
+    assert cartolina[1:4] == ["Cartolina branca", "Cartolina azul", "Cartolina amarela"], cartolina   # as mais comuns primeiro
+    tnt = nomes("tnt", "pedagogico")
+    assert tnt[:4] == ["TNT", "TNT branco", "TNT azul", "TNT amarelo"] and "TNT preto" in tnt, tnt   # TNT é masculino
+    assert "Folha de EVA branca" in nomes("eva", "pedagogico") and "Folha de EVA dourada" in nomes("eva", "pedagogico")
+    assert nomes("cartolina azul", "pedagogico")[0] == "Cartolina azul"
+    assert "Luva descartável M" in nomes("luva", "limpeza") and "Desinfetante lavanda" in nomes("desinfetante", "limpeza")
+    assert "Copo descartável 200 ml" in nomes("copo", "limpeza")
+    cor = f.buscar("cartolina azul", "pedagogico")[0]
+    assert cor["unidade"] == "folha" and cor["do_catalogo"] is True
+
+
+def teste_federal_tem_os_modelos_do_material_escolar():
+    f = cat.CatalogoFederal()
+    por = lambda q: {x["nome"]: x for x in f.buscar(q, "pedagogico", limite=100)}          # noqa: E731
+    lapis = f.buscar("lapis de cor", "pedagogico")
+    assert [x["nome"] for x in lapis][:3] == ["Lápis de cor", "Lápis de cor 6 a 12 cores", "Lápis de cor 24 cores"], lapis
+    assert all(x["unidade"] == "caixa" for x in lapis)                                  # lápis de cor se compra em caixa
+    nomes = por("lapis de cor")
+    assert {"Lápis de cor 36 cores", "Lápis de cor 48 cores", "Lápis de cor 72 cores", "Lápis de cor jumbo 6 a 12 cores"} <= set(nomes)
+    assert "Giz de cera 6 a 12 cores" in por("giz de cera") and "Caneta hidrográfica 24 cores" in por("hidrografica")
+    assert "Tinta guache kit 12 cores" in por("tinta guache") and por("tinta guache")["Tinta guache kit 6 cores"]["unidade"] == "caixa"
+    assert por("tinta guache")["Tinta guache azul"]["unidade"] == "unidade"              # o pote avulso continua unidade
+    assert "Cola branca 90 g" in por("cola branca") and "Cola em bastão 20 g" in por("cola bastao")
+    assert "Tesoura escolar sem ponta" in por("tesoura") and "Caderno brochura 96 folhas" in por("caderno")
+    assert "Papel A4 branco 90 g" in por("sulfite")
+
+
+def teste_federal_tem_os_tamanhos_do_material_de_limpeza():
+    f = cat.CatalogoFederal()
+    por = lambda q: {x["nome"]: x for x in f.buscar(q, "limpeza", limite=100)}          # noqa: E731
+    sabao = [x["nome"] for x in f.buscar("sabao em po", "limpeza")]
+    assert sabao[:4] == ["Sabão em pó", "Sabão em pó 500 g", "Sabão em pó 1 kg", "Sabão em pó 250 g"], sabao
+    assert por("sabao em po")["Sabão em pó 250 g"]["unidade"] == "pacote"
+    assert "Sabão líquido 2 L" in por("sabao liquido 2 litros")                            # "2 litros" acha "2 L"
+    assert por("agua sanitaria")["Água sanitária 2 L"]["unidade"] == "frasco"             # líquido com tamanho: conta frascos
+    desinf = [x["nome"] for x in f.buscar("desinfetante", "limpeza")]
+    assert desinf[:3] == ["Desinfetante", "Desinfetante 2 L", "Desinfetante 1 L"], desinf    # tamanho antes do cheiro
+    assert "Desinfetante lavanda" in desinf
+    assert "Limpa-vidros 500 ml" in por("limpa vidro")                                     # o hífen separa as palavras
+    assert "Balde 20 L" in por("balde") and "Vassoura de piaçava" in por("vassoura")
+    assert not f.buscar("sabao", "pedagogico")                                             # limpeza não aparece no pedagógico
+
+
+def teste_federal_busca_pelo_comeco_da_palavra():
+    f = cat.CatalogoFederal()
+    achou = [x["nome"] for x in f.buscar("cola", "pedagogico", limite=100)]
+    assert "Cola" in achou and "Sacola" not in achou and "Transferidor escolar" not in achou, achou
+    assert [x["nome"] for x in f.buscar("cart az", "pedagogico")][:2] == ["Cartolina azul", "Cartolina azul claro"]
+    assert f.buscar("olina", "pedagogico") == []                            # pedaço do meio da palavra não vale
+
+
+def teste_federal_sem_arquivo_nao_derruba():
+    f = cat.CatalogoFederal(os.path.join(tempfile.mkdtemp(), "nao_existe.json"))
+    assert len(f) == 0 and f.buscar("papel", "pedagogico") == []
+
+
 def teste_sem_catalogo_de_fabrica_funciona():
     c = cat.Catalogo(tempfile.mkdtemp(), "PC1", arquivo_base=os.path.join(tempfile.mkdtemp(), "nao_existe.json"))
     assert c.entradas == {} and c.aplicar([item("Qualquer coisa")])[0]["descricao"] == "Qualquer coisa"

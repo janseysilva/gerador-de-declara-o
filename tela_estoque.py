@@ -1391,6 +1391,8 @@ class PainelEstoque(tk.Frame):
     # -- pesquisa de material e de destinatário (comuns às páginas) ---------------------
 
     def _descrever_material(self, m):
+        if m.get("do_catalogo"):                       # sugestão do banco de materiais (ainda não cadastrada)
+            return m["nome"], "{}  ·  do catálogo, será cadastrado ao adicionar".format(m["unidade"]), COR_AZUL
         saldo = "em estoque: {} {}".format(texto_quantidade(m["saldo"]), m["unidade"])
         cor = {"zerado": COR_VERMELHO, "baixo": COR_LARANJA}.get(m["situacao"])
         return m["nome"], "{}  ·  {}".format(m["unidade"], saldo), cor
@@ -1421,8 +1423,8 @@ class PainelEstoque(tk.Frame):
         externo.grid(row=0, column=0, sticky="new", padx=(0, 8))
         self.ent_material = None
         self.busca_ent = CampoBusca(c1, "Digite o nome do material (ou parte dele)",
-                                    self.livro_buscar_materiais, self._descrever_material, self._ent_escolheu,
-                                    cadastrar=self._cadastrar_material_pelo_campo)
+                                    self.livro_buscar_para_entrada, self._descrever_material, self._ent_escolheu,
+                                    cadastrar=self._cadastrar_material_pelo_campo, maximo=6)
         self.busca_ent.pack(fill="x", pady=(4, 0))
         linha = tk.Frame(c1, bg=COR_CARTAO)
         linha.pack(fill="x", pady=(10, 0))
@@ -1462,7 +1464,31 @@ class PainelEstoque(tk.Frame):
         return f
 
     def livro_buscar_materiais(self, texto):
-        return self.livro.buscar_materiais(texto)
+        """
+        Os materiais já cadastrados que combinam com o que foi digitado: pelo nome e também pelos apelidos do banco de
+        materiais (quem digita "sulfite" acha o "Papel A4 branco 75 g" que já está cadastrado).
+        """
+        achados = self.livro.buscar_materiais(texto)
+        federal = getattr(self.app, "catalogo_federal", None)
+        if federal is None:
+            return achados
+        cadastrados = {est.normalizar(m["nome"]): m for m in self.livro.materiais()}
+        ids = {m["id"] for m in achados}
+        for sugestao in federal.buscar(texto, self.chave, limite=200):
+            m = cadastrados.get(est.normalizar(sugestao["nome"]))
+            if m is not None and m["id"] not in ids:
+                achados.append(m)
+                ids.add(m["id"])
+        return achados
+
+    def livro_buscar_para_entrada(self, texto):
+        """Na Entrada: primeiro o que já está cadastrado; depois, as sugestões do banco de materiais (catálogo federal)."""
+        achados = self.livro_buscar_materiais(texto)
+        federal = getattr(self.app, "catalogo_federal", None)
+        if federal is None:
+            return achados
+        ja = {est.normalizar(m["nome"]) for m in self.livro.materiais(incluir_ocultos=True)}
+        return achados + federal.buscar(texto, self.chave, ja)
 
     def _ent_ler_pdf(self):
         """Lê o PDF (escaneado ou não) de uma nota fiscal e põe os produtos na lista de entrada."""
@@ -1557,6 +1583,13 @@ class PainelEstoque(tk.Frame):
             self._aviso(str(erro), "erro")
             self.ent_qtd_entrada.focus_set()
             return
+        if self.ent_material.get("do_catalogo"):       # veio do banco de materiais: cadastra agora, com o nome e a unidade dele
+            try:
+                mid = self.livro.cadastrar_material(self.ent_material["nome"], self.ent_material["unidade"], 0)
+            except ErroEstoque as erro:
+                self._aviso(str(erro), "erro")
+                return
+            self.ent_material = self.livro.material(mid)
         self._somar(self.ent_itens, self.ent_material["id"], qtd)
         nome = self.ent_material["nome"]
         self.busca_ent.limpar()

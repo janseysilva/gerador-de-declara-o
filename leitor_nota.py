@@ -352,6 +352,24 @@ _CORES = {"amarelo", "amarela", "azul", "verde", "vermelho", "vermelha", "rosa",
           "royal", "gelo", "colorido"}
 
 
+# Como a unidade de medida é escrita: "2 litros" = "2 L", "500 gramas" = "500 g", "1 quilo" = "1 kg".
+_UNIDADES_ESCRITAS = {"litro": "l", "litros": "l", "lt": "l", "lts": "l", "gramas": "g", "grama": "g", "gr": "g",
+                      "grs": "g", "quilo": "kg", "quilos": "kg", "kilo": "kg", "kilos": "kg",
+                      "mililitro": "ml", "mililitros": "ml"}
+
+
+def _palavras_do_nome(texto):
+    """
+    As palavras (sem acento, minúsculas) separando número de letra e unificando a unidade escrita depois de
+    um número: "Sabão em pó 500g" e "Sabão em pó 500 gramas" dão as mesmas palavras de "Sabão em pó 500 g".
+    """
+    palavras = re.findall(r"\d+|[a-z]+", sem_acento(texto or "").lower())
+    for i in range(1, len(palavras)):
+        if palavras[i - 1].isdigit() and palavras[i] in _UNIDADES_ESCRITAS:
+            palavras[i] = _UNIDADES_ESCRITAS[palavras[i]]
+    return palavras
+
+
 def chave_produto(texto):
     """
     As palavras que identificam o produto: sem acento, sem maiúsculas, sem o que está entre parênteses
@@ -359,9 +377,9 @@ def chave_produto(texto):
     'Sabão em Pó (marca X)' -> {'sabao', 'po'}.
     """
     sem_parenteses = re.sub(r"\([^)]*\)", " ", texto or "")
-    palavras = re.findall(r"[a-z0-9]+", sem_acento(sem_parenteses).lower())
+    palavras = _palavras_do_nome(sem_parenteses)
     if not [p for p in palavras if p not in _PALAVRAS_VAZIAS]:                 # nome só com parênteses
-        palavras = re.findall(r"[a-z0-9]+", sem_acento(texto or "").lower())
+        palavras = _palavras_do_nome(texto)
     chave = set()
     for p in palavras:
         if p in _PALAVRAS_VAZIAS:
@@ -432,13 +450,29 @@ def _conflito_tamanho(item, tamanho_outro):
 
 def _candidatos_iniciais(materiais, catalogo):
     return [{"nome": m["nome"], "_destino": ("existente", m),
-             "tamanho": catalogo.tamanho_do_nome(m["nome"]) if catalogo else None} for m in materiais]
+             "tamanho": (catalogo.tamanho_do_nome(m["nome"]) if catalogo else None) or tamanho_embalagem(m["nome"])}
+            for m in materiais]
+
+
+def _igual_com_tamanho(item, candidatos):
+    """
+    O candidato cujo nome é o do item MAIS o tamanho da embalagem: "Sabão em pó" de 500 g é o material "Sabão em pó
+    500 g" (nome do banco de materiais, com o tamanho no nome). Só vale se o nome do item não traz tamanho.
+    """
+    tam = tamanho_embalagem(item.get("embalagem") or "")
+    if tam is None or item.get("separado") or tamanho_embalagem(item["descricao"]) is not None:
+        return None
+    alvo = chave_produto("{} {}".format(item["descricao"], descrever_tamanho(tam)))
+    return next((c for c in candidatos if chave_produto(c["nome"]) == alvo), None)
 
 
 def _candidato_do_item(item, candidatos, catalogo):
     """O candidato (material do estoque ou item de cima) com que o item se junta: nome igual, ou parecido."""
     if item.get("separado"):
         return achar_igual(item["descricao"], candidatos)
+    com_tamanho = _igual_com_tamanho(item, candidatos)
+    if com_tamanho is not None:
+        return com_tamanho
     achado = achar_mesmo(item["descricao"], candidatos)
     if achado is not None and chave_produto(item["descricao"]) != chave_produto(achado["nome"]) \
             and catalogo is not None and catalogo.sao_diferentes(item["descricao"], achado["nome"]):
@@ -504,6 +538,8 @@ def achar_duvidas(itens, materiais, catalogo=None):
                 duvidas.append(_duvida(n, item, "tamanho", igual["nome"], destino,
                                        itens[destino[1]] if destino[0] == "junta" else None, igual.get("tamanho")))
             continue                                                 # nome igual: junta sozinho
+        if _igual_com_tamanho(item, candidatos) is not None:
+            continue                                                 # nome + tamanho = o material "X 500 g": junta sozinho
         parecido = _candidato_do_item(item, candidatos, catalogo)
         if parecido is not None:
             if chave_produto(item["descricao"]) != chave_produto(parecido["nome"]):

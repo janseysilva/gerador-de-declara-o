@@ -101,6 +101,19 @@ DECLARAÇÕES ESCOLARES - como usar
      Cada "Juntar" e "Não juntar" que você responde também fica guardado: a mesma
      pergunta não volta. O catálogo fica na pasta do estoque, então os dois
      computadores da escola dividem o que foi aprendido.
+     Além disso, o programa traz um BANCO DE MATERIAIS de fábrica (cerca de 1.050
+     opções de produtos de escola, do Catálogo de Materiais do Governo Federal e alguns
+     complementos). Na Entrada, ao digitar o nome de um material que ainda não
+     está cadastrado, ele sugere os do banco (marcados "do catálogo"): escolha um,
+     informe a quantidade e clique em "Adicionar à lista"; o material é cadastrado
+     com o nome e a unidade do banco. Digitar o jeito comum de falar também
+     funciona ("sulfite" acha "Papel A4", "saco de lixo", "massa de modelar").
+     O que se separa por cor ou tamanho tem uma opção para cada um: digite
+     "cartolina" e escolha "Cartolina azul"; "tnt" e "TNT preto"; "luva" e "Luva descartável M".
+     O mesmo vale para os modelos e tamanhos: "lápis de cor" traz "6 a 12 cores", 24, 36, 48
+     e 72 cores; "sabão em pó" traz 250 g, 500 g, 1 kg e 2 kg; "desinfetante" traz 500 ml, 1 L,
+     2 L e 5 L. Cada tamanho é um material separado no estoque, e uma nota com o mesmo
+     produto e o mesmo tamanho entra no material certo sozinha.
    - Saída de material: escolha quem recebe (digite o nome e clique; quem ainda
      não está cadastrado é cadastrado na hora e fica salvo), depois os materiais
      e as quantidades. A coluna "Fica em estoque" mostra o que sobra. O programa

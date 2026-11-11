@@ -5,7 +5,7 @@ a = Analysis(
     ['declaracoes_escolares.py'],
     pathex=[],
     binaries=[],
-    datas=[('icone_declaracoes.ico', '.'), ('catalogo_base.json', '.')],
+    datas=[('icone_declaracoes.ico', '.'), ('catalogo_base.json', '.'), ('catalogo_federal.json', '.')],
     hiddenimports=['reportlab.graphics.barcode.common', 'docx', 'frequencia_gier', 'gier_auto', 'gier_online', 'registro', 'estoque', 'tela_estoque', 'leitor_nota', 'catalogo', 'pypdfium2', 'pypdfium2_raw', 'pdfplumber'],
     hookspath=[],
     hooksconfig={},
