@@ -1,0 +1,7 @@
+Modelos do leitor de notas fiscais (OCR) do Declaracoes Escolares.
+
+det.onnx - deteccao de texto
+rec.onnx - reconhecimento de texto (alfabeto latino, versao leve)
+
+Sao os modelos PP-OCRv5 usados pelo pacote rapidocr 3.10.0 (projeto RapidOCR, sobre o PaddleOCR; licenca Apache-2.0).
+Vao dentro do programa (pasta modelos_ocr) para ele funcionar sem internet. Nao contem dados de ninguem.

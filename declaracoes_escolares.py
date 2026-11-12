@@ -26,6 +26,7 @@ import shutil
 import subprocess
 import time
 import unicodedata
+import webbrowser
 from datetime import datetime
 from xml.sax.saxutils import escape as xml_escape
 
@@ -33,11 +34,15 @@ import tkinter as tk
 import tkinter.font as tkfont
 from tkinter import ttk, filedialog, messagebox
 
+import acesso
+import atualizacao
 import catalogo
 import estoque
 import tela_estoque
+import tela_login
+import tela_usuarios
 
-VERSAO_PROGRAMA = "2.12"
+VERSAO_PROGRAMA = "2.13"
 NOME_PROGRAMA = "Declarações Escolares"
 
 
@@ -1388,6 +1393,22 @@ COR_LARANJA = "#C55A11"
 ALTURA_CABECALHO = 92
 FONTE = "Arial"             # escolhida pelo Jansey (letra das imagens de revisão)
 AUMENTO_LETRA = 1.2         # letras 20% maiores que o padrão do Windows
+_ESCALA_BASE = None         # escala original do Tk, guardada na 1ª janela do programa
+
+
+def aplicar_aumento_de_letra(raiz):
+    """
+    Letras 20% maiores (o "scaling" do Tk vale para todas as fontes em pontos). O Tk guarda esse valor para o
+    processo inteiro, então cada janela nova (a de entrada, a principal, a principal de novo depois do Sair)
+    partiria do valor já aumentado: por isso o valor original é guardado na primeira vez.
+    """
+    global _ESCALA_BASE
+    try:
+        if _ESCALA_BASE is None:
+            _ESCALA_BASE = float(raiz.tk.call("tk", "scaling"))
+        raiz.tk.call("tk", "scaling", _ESCALA_BASE * AUMENTO_LETRA)
+    except tk.TclError:
+        pass
 
 # Frase abaixo do nome do programa, na faixa azul, para cada aba
 SUBTITULO_ABA = {
@@ -1768,13 +1789,11 @@ def campo(pai, titulo, variavel, largura=None, opcoes=None, editavel=True):
 
 class Aplicacao(tk.Tk):
 
-    def __init__(self):
+    def __init__(self, sessao=None):
         super().__init__()
-        # Letras 20% maiores (o "scaling" do Tk vale para todas as fontes em pontos)
-        try:
-            self.tk.call("tk", "scaling", float(self.tk.call("tk", "scaling")) * AUMENTO_LETRA)
-        except tk.TclError:
-            pass
+        self.sessao = sessao or acesso.Sessao.completa()      # quem entrou e o que pode ver (sem login: tudo)
+        self.trocar_usuario = False
+        aplicar_aumento_de_letra(self)
         self.title(NOME_PROGRAMA)
         try:
             self.iconbitmap(default=caminho_recurso("icone_declaracoes.ico"))    # vale também para as janelas menores
@@ -1841,11 +1860,27 @@ class Aplicacao(tk.Tk):
         self._mostrar_aluno()
         self._parentesco_padrao({})
         self._atualizar_relogio()
+        self._mostrar_aba_inicial()
         self._maximizar()
         self.after(150, self._focar_pesquisa)
+        self.after(3000, self._conferir_versao)         # aviso de versão nova (em segundo plano)
+        if getattr(self.sessao, "por_copia", False):          # entrou pela cópia guardada: o servidor confirma depois
+            self.after(1500, self._conferir_acesso)
+
+    def _mostrar_aba_inicial(self):
+        """Quem não vê a aba Declarações já abre na primeira aba que pode usar."""
+        abas = self.sessao.abas()
+        if not abas:
+            self.area.pack_forget()
+            tk.Label(self, text="O seu acesso ainda não tem nenhuma aba liberada.\n\nFale com o administrador do programa.",
+                     bg=COR_FUNDO, fg=COR_AZUL_ESCURO, font=(FONTE, 13, "bold"), justify="center").pack(expand=True)
+        elif abas[0] != "declaracoes":
+            self._ao_mudar_aba(abas[0])
 
     def _focar_pesquisa(self):
         """Ao abrir, o cursor já fica piscando na barra de pesquisa."""
+        if not self.sessao.pode("declaracoes"):
+            return
         try:
             self.focus_force()
             self.entrada_busca.focus_set()
@@ -1862,6 +1897,89 @@ class Aplicacao(tk.Tk):
                 self.attributes("-zoomed", True)  # Linux
             except tk.TclError:
                 pass
+
+    # -- aviso de versão nova ---------------------------------------------------
+
+    def _conferir_versao(self):
+        """Pergunta ao GitHub, em segundo plano, se há versão nova. Sem internet, nada acontece."""
+        self._conferencia = atualizacao.Conferencia(VERSAO_PROGRAMA)
+        self.after(500, self._esperar_versao)
+
+    def _esperar_versao(self):
+        conferencia = self._conferencia
+        if not conferencia.pronta:
+            self.after(500, self._esperar_versao)
+        elif conferencia.nova:
+            self._mostrar_aviso_versao(conferencia.nova)
+
+    def _mostrar_aviso_versao(self, nova):
+        """Faixa amarela logo abaixo do cabeçalho. O programa nunca baixa nem instala nada sozinho."""
+        if getattr(self, "aviso_versao", None) is not None:
+            return
+        fundo = "#FFF4D6"
+        faixa = tk.Frame(self, bg=fundo, highlightthickness=1, highlightbackground="#F0D78C")
+        self.aviso_versao = faixa
+        texto = tk.Frame(faixa, bg=fundo)
+        texto.pack(side="left", padx=(18, 8), pady=6)
+        tk.Label(texto, text="Há uma versão nova do programa: {}  (você está usando a {}).".format(nova, VERSAO_PROGRAMA),
+                 bg=fundo, fg=COR_TEXTO, font=(FONTE, 10, "bold"), anchor="w").pack(anchor="w")
+        self.msg_versao = tk.Label(
+            texto, bg=fundo, fg=COR_TEXTO_FRACO, font=(FONTE, 9), anchor="w", justify="left",
+            text="Clique em Baixar, feche este programa e abra o arquivo baixado. Os seus dados continuam.")
+        self.msg_versao.pack(anchor="w")
+        botoes = tk.Frame(faixa, bg=fundo)
+        botoes.pack(side="right", padx=18, pady=6)
+        Botao(botoes, "Agora não", self._fechar_aviso_versao, estilo="suave", pad_y=4, pad_x=12, raio=8
+              ).pack(side="right", padx=(8, 0))
+        Botao(botoes, "Baixar", self._baixar_versao, estilo="azul", pad_y=4, pad_x=16, raio=8).pack(side="right")
+        faixa.pack(fill="x", after=self.cabecalho)
+
+    def _baixar_versao(self):
+        """Só abre o endereço no navegador; quem instala é a pessoa."""
+        try:
+            aberto = webbrowser.open(atualizacao.URL_BAIXAR)
+        except Exception:
+            aberto = False
+        if aberto:
+            self.msg_versao.configure(
+                text="O download foi aberto no navegador. Quando terminar, feche este programa e abra o arquivo baixado.")
+        else:
+            messagebox.showinfo(NOME_PROGRAMA, "Não consegui abrir o navegador. Copie este endereço e cole nele:\n\n"
+                                + atualizacao.URL_BAIXAR, parent=self)
+
+    def _fechar_aviso_versao(self):
+        self.aviso_versao.pack_forget()
+
+    # -- confirmação do acesso (quando entrou NA HORA pela cópia guardada) --------------------
+
+    def _conferir_acesso(self):
+        """Confirma com o servidor, em segundo plano, o acesso de quem entrou pela cópia guardada neste computador.
+        Sem resposta (rede ruim ou sem internet), nada muda e tenta de novo em 2 minutos."""
+        self._conf_acesso = acesso.ConferenciaAcesso(self.sessao)
+        self.after(500, self._esperar_acesso)
+
+    def _esperar_acesso(self):
+        conferencia = self._conf_acesso
+        if not conferencia.pronta:
+            self.after(500, self._esperar_acesso)
+        elif conferencia.estado == "sem_resposta":
+            self.after(120000, self._conferir_acesso)
+        elif conferencia.estado == "ok":
+            self.sessao.por_copia = False
+        elif conferencia.estado == "mudou":
+            self._voltar_para_a_entrada(
+                "O administrador mudou o seu acesso.\n\nO programa vai voltar para a tela de entrada para a mudança valer.",
+                "O seu acesso mudou. Entre de novo para continuar.")
+        else:                                                    # cortado
+            self._voltar_para_a_entrada(conferencia.texto + "\n\nO programa vai voltar para a tela de entrada.",
+                                        conferencia.texto)
+
+    def _voltar_para_a_entrada(self, texto, aviso):
+        """O acesso mudou ou foi cancelado: volta para a tela de entrada na hora (sem perguntar sobre listas pendentes)."""
+        messagebox.showwarning(NOME_PROGRAMA, texto, parent=self)
+        self.aviso_ao_voltar = aviso
+        self.trocar_usuario = True
+        self.destroy()
 
     # -- montagem -------------------------------------------------------------
 
@@ -1891,11 +2009,26 @@ class Aplicacao(tk.Tk):
         y1, y2, y3 = (15, 33, 51) if baixa else (28, 47, 66)
         self._id_escola = cab.create_text(0, y1, anchor="e", text="", fill="white", font=(FONTE, 9, "bold"))
         self._id_data = cab.create_text(0, y2, anchor="e", text="", fill="#D5E1F7", font=(FONTE, 9))
-        self._id_config = cab.create_text(0, y3, anchor="e", text="Configuração", fill="white",
-                                          tags="config", font=(FONTE, 9, "underline"))
-        cab.tag_bind("config", "<Button-1>", lambda e: self._abrir_configuracao())
-        cab.tag_bind("config", "<Enter>", lambda e: cab.configure(cursor="hand2"))
-        cab.tag_bind("config", "<Leave>", lambda e: cab.configure(cursor=""))
+        self._y_links = y3
+        quem = self.sessao.nome or self.sessao.email
+        if quem and self.sessao.sem_internet:
+            quem += "  (sem internet)"
+        self._id_quem = cab.create_text(0, y3, anchor="e", text=quem, fill="#D5E1F7", font=(FONTE, 9))
+        self._links = {}
+        for chave, texto, comando in (("config", "Configuração", self._abrir_configuracao),
+                                      ("usuarios", "Usuários", self._abrir_usuarios),
+                                      ("sair", "Sair", self._sair)):
+            self._links[chave] = cab.create_text(0, y3, anchor="e", text=texto, fill="white", tags=chave,
+                                                 font=(FONTE, 9, "underline"))
+            cab.tag_bind(chave, "<Button-1>", lambda e, c=comando: c())
+            cab.tag_bind(chave, "<Enter>", lambda e: cab.configure(cursor="hand2"))
+            cab.tag_bind(chave, "<Leave>", lambda e: cab.configure(cursor=""))
+        # Quem não pode não vê o link; sem login configurado, o programa é como sempre foi (sem Usuários, sem Sair).
+        visiveis = {"config": self.sessao.pode("configuracao"),
+                    "usuarios": self.sessao.pode("usuarios") and not self.sessao.sem_login,
+                    "sair": not self.sessao.sem_login}
+        for chave, item in self._links.items():
+            cab.itemconfigure(item, state="normal" if visiveis[chave] else "hidden")
         cab.bind("<Configure>", self._pintar_cabecalho)
 
     def _pintar_cabecalho(self, _evento=None):
@@ -1906,8 +2039,14 @@ class Aplicacao(tk.Tk):
             cab.create_rectangle(x, 0, x + 4, self.alt_cab, outline="", tags="degrade",
                                  fill=_misturar("#17327A", "#2A63C8", x / largura))
         cab.tag_lower("degrade")
-        for item in (self._id_escola, self._id_data, self._id_config):
+        for item in (self._id_escola, self._id_data):
             cab.coords(item, largura - 26, cab.coords(item)[1])
+        x = largura - 26                       # os links da 3ª linha, da direita para a esquerda
+        for item in (self._links["sair"], self._links["usuarios"], self._links["config"], self._id_quem):
+            if cab.itemcget(item, "state") == "hidden" or not cab.itemcget(item, "text"):
+                continue
+            cab.coords(item, x, self._y_links)
+            x = cab.bbox(item)[0] - 16
 
     def _atualizar_relogio(self):
         agora = datetime.now()
@@ -1963,11 +2102,14 @@ class Aplicacao(tk.Tk):
 
     def _montar_interface(self):
         tela_estoque.usar(sys.modules[__name__])
+        tela_usuarios.usar(sys.modules[__name__])
         self._montar_cabecalho()
+        nomes = {"declaracoes": "Declarações", "pedagogico": "Estoque pedagógico", "limpeza": "Estoque de limpeza"}
+        abas = [(chave, nomes[chave]) for chave in self.sessao.abas()]       # só as abas que a pessoa pode usar
         self.barra_abas = tela_estoque.BarraAbas(
-            self, [("declaracoes", "Declarações"), ("pedagogico", "Estoque pedagógico"),
-                   ("limpeza", "Estoque de limpeza")], self._ao_mudar_aba, baixa=self.tela_baixa)
-        self.barra_abas.pack(fill="x")
+            self, abas or [("declaracoes", "Declarações")], self._ao_mudar_aba, baixa=self.tela_baixa)
+        if len(abas) > 1:                                                     # com uma aba só, não precisa da barra
+            self.barra_abas.pack(fill="x")
         self._atualizar_selos()
         self.area = AreaRolavel(self, COR_FUNDO)
         self.area.pack(fill="both", expand=True)
@@ -2972,7 +3114,34 @@ class Aplicacao(tk.Tk):
     # -- configuração ----------------------------------------------------------
 
     def _abrir_configuracao(self):
+        if not self.sessao.pode("configuracao"):
+            messagebox.showinfo(NOME_PROGRAMA, "Só o administrador pode abrir a Configuração.", parent=self)
+            return
         JanelaConfiguracao(self)
+
+    def _abrir_usuarios(self):
+        """Tela do administrador: quem pode entrar e o que cada pessoa vê."""
+        if not self.sessao.pode("usuarios") or self.sessao.sem_login:
+            return
+        if self.sessao.sem_internet:
+            messagebox.showinfo(NOME_PROGRAMA, "Sem internet agora. Para liberar ou cadastrar pessoas, o programa precisa "
+                                "estar conectado.", parent=self)
+            return
+        aberta = getattr(self, "_janela_usuarios", None)
+        if aberta is not None and aberta.winfo_exists():
+            aberta.lift()
+            return
+        self._janela_usuarios = tela_usuarios.JanelaUsuarios(self)
+
+    def _sair(self):
+        """Fecha a janela e volta para a tela de entrada (para trocar de usuário)."""
+        pendentes = sum(p.pendentes() for p in self.paineis.values())
+        if pendentes and not messagebox.askyesno(
+                NOME_PROGRAMA, "Há material numa lista de entrada ou saída que ainda não foi registrado.\n\n"
+                "Sair mesmo assim? O que está na lista será perdido.", icon="warning", parent=self):
+            return
+        self.trocar_usuario = True
+        self.destroy()
 
     # ----- Frequência: "Atualizar frequência do Gier" (busca sozinha, depois do login) -----
     def atualizar_frequencia_tela(self):
@@ -3942,6 +4111,38 @@ def testar_gier_linha_de_comando(saida):
         json.dump(res, f, ensure_ascii=False)
 
 
+def testar_nota_linha_de_comando(caminho, saida):
+    """DeclaracoesEscolares.exe --testar-nota LISTA.pdf RESULTADO.json (sem abrir a janela): confere, DENTRO do .exe,
+    o leitor de notas (OCR), os catálogos de fábrica e os módulos do login e do aviso de versão."""
+    res = {"versao": VERSAO_PROGRAMA, "congelado": bool(getattr(sys, "frozen", False))}
+    try:
+        import leitor_nota
+        res["ocr_disponivel"], res["ocr_motivo"] = leitor_nota.disponivel()
+        res["modelos_junto"] = bool(leitor_nota._pasta_modelos())
+        lida = leitor_nota.LeitorNota().ler(caminho)
+        res["itens"] = [{"descricao": i["descricao"], "unidade": i.get("unidade"), "quantidade": i["quantidade"]}
+                        for i in lida["itens"]]
+    except Exception as erro:
+        res["erro_ocr"] = repr(erro)
+    try:
+        import catalogo
+        res["catalogo_federal"] = len(catalogo.CatalogoFederal())
+        res["catalogo_base_bytes"] = os.path.getsize(catalogo.caminho_base())
+    except Exception as erro:
+        res["erro_catalogo"] = repr(erro)
+    try:
+        import atualizacao
+        import tela_login
+        import tela_usuarios
+        res["modulos_novos"] = True
+        res["aviso_de_versao"] = atualizacao.mais_nova("99.0", VERSAO_PROGRAMA) and not atualizacao.mais_nova(VERSAO_PROGRAMA, VERSAO_PROGRAMA)
+        res["senha_fraca"] = acesso.senha_fraca("12345678") and not acesso.senha_fraca("Boa-Senha-77")
+    except Exception as erro:
+        res["erro_modulos"] = repr(erro)
+    with open(saida, "w", encoding="utf-8") as f:
+        json.dump(res, f, ensure_ascii=False)
+
+
 def main():
     if len(sys.argv) >= 4 and sys.argv[1] == "--testar-pdf":
         testar_pdf_linha_de_comando(sys.argv[2], sys.argv[3])
@@ -3949,12 +4150,26 @@ def main():
     if len(sys.argv) >= 3 and sys.argv[1] == "--testar-gier":
         testar_gier_linha_de_comando(sys.argv[2])
         return
+    if len(sys.argv) >= 4 and sys.argv[1] == "--testar-nota":
+        testar_nota_linha_de_comando(sys.argv[2], sys.argv[3])
+        return
     import registro
     registro.iniciar(VERSAO_PROGRAMA)
-    app = Aplicacao()
-    if not app.alunos:
-        app.after(400, app._abrir_configuracao)
-    app.mainloop()
+    aviso = ""
+    while True:
+        sessao = None                                   # sem login configurado, o programa abre como sempre
+        if acesso.configurado():
+            tela_login.usar(sys.modules[__name__])
+            sessao = tela_login.pedir_acesso(aviso)
+            if sessao is None:
+                return                                  # fechou a tela de entrada
+        app = Aplicacao(sessao)
+        if not app.alunos and app.sessao.pode("configuracao"):
+            app.after(400, app._abrir_configuracao)
+        app.mainloop()
+        if not app.trocar_usuario:
+            return
+        aviso = getattr(app, "aviso_ao_voltar", "") or "Você saiu. Entre de novo para continuar."
 
 
 if __name__ == "__main__":

@@ -4,3 +4,15 @@ pdfplumber
 pypdfium2
 pillow
 pyinstaller
+# leitor de notas fiscais escaneadas (OCR), nas versoes testadas em 12/11/2026
+rapidocr==3.10.0
+onnxruntime==1.31.1
+opencv-python-headless==5.0.0.93
+numpy==2.5.2
+pyclipper
+shapely
+omegaconf
+pyyaml
+requests
+tqdm
+six

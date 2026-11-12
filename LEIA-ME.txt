@@ -1,6 +1,31 @@
 DECLARAÇÕES ESCOLARES - como usar
 ==================================
 
+0. ENTRAR NO PROGRAMA (quando o acesso por e-mail e senha estiver ligado)
+   - Ao abrir, digite o seu e-mail e a sua senha. A tela já lembra o último e-mail usado.
+   - A senha precisa ter pelo menos 8 letras ou números e não pode ser fácil de adivinhar (nada de 12345678,
+     sequências, letras repetidas, senhas comuns ou o seu próprio e-mail).
+   - Primeiro acesso: clique em "Criar minha conta", preencha e envie. O administrador libera o
+     seu acesso e escolhe o que você pode usar; até lá, o programa avisa que ainda não foi liberado.
+   - "Esqueci minha senha": o programa manda uma senha provisória para o seu e-mail. Entre com ela
+     e depois use "Alterar minha senha" para escolher a sua.
+   - Cada pessoa vê só o que o administrador liberou: Declarações, Estoque (pedagógico e de limpeza)
+     ou os dois. O Administrador vê tudo, cadastra as pessoas ("Usuários", no alto) e mexe na
+     Configuração (que as outras pessoas não abrem).
+   - "Sair" (no alto) volta para a tela de entrada, para trocar de pessoa.
+   - Errou a senha 5 vezes seguidas? A conta trava por 15 minutos.
+   - Sem internet: quem já entrou neste computador nos últimos 7 dias consegue entrar mesmo assim
+     (a tela Usuários só funciona com internet).
+   - Entrada rápida: quem já entrou neste computador nos últimos 7 dias entra NA HORA, sem esperar a internet.
+     Logo depois, o programa confirma o acesso com o servidor em segundo plano. Se o administrador bloqueou ou
+     mudou o seu acesso, ele avisa e volta para a tela de entrada. Só a primeira vez em cada computador (ou depois
+     de 7 dias) espera o servidor, e isso às vezes leva alguns segundos na rede da escola.
+   - Aviso de versão nova: ao abrir, o programa confere (pela internet) se saiu uma versão mais nova.
+     Se saiu, aparece uma faixa amarela no alto com o botão "Baixar". O programa NUNCA instala nada
+     sozinho: o botão só abre o download no navegador. Depois de baixar, feche o programa e abra o
+     arquivo baixado; ele instala por cima e os seus dados continuam. "Agora não" esconde a faixa
+     até a próxima vez que abrir. Sem internet, nada aparece.
+
 1. PRIMEIRA VEZ (Configuração)
    - Clique em "Configuração" (canto de cima, à direita).
    - Em "Banco de dados dos alunos", clique em "Abrir arquivo de alunos..."
@@ -69,8 +94,14 @@ DECLARAÇÕES ESCOLARES - como usar
    materiais, o que está esperando registro, quantos registros). Páginas:
    - Estoque: o relatório, com o saldo de cada material (nome, unidade e
      quantidade em estoque). "Novo material" cadastra um material (nome e
-     unidade). Clique duas vezes num material para editar ou ocultar. "Relatório em PDF" gera o relatório
-     pronto para imprimir (pasta Declarações Escolares\Estoque).
+     unidade). Clique duas vezes num material para editar ou ocultar. "Relatório em PDF" pergunta quais materiais
+     entram: "Todos os materiais" (inclui os que zeraram, com 0), "Só os que tenho em estoque"
+     (acima de zero) ou só os que estão abaixo ou iguais a uma quantidade que você digita
+     (ex.: 10, para saber o que precisa comprar; o 0 traz só os zerados).
+     O relatório fica pronto para imprimir (pasta Declarações Escolares\Estoque).
+   - Histórico (o último cartão): todas as entradas e saídas, da mais nova para a mais antiga.
+     Dá para filtrar por tipo, por texto, por PESSOA que recebeu e por DIA (um dia ou de um dia
+     até outro). "Hoje" preenche o dia de hoje e "Limpar filtros" volta a mostrar tudo.
    - Entrada de material: digite o nome do material (ou parte dele); as opções
      aparecem logo abaixo, clique na certa. Se o material ainda não existe, a
      última opção cadastra na hora. Digite a quantidade e clique em "Adicionar à

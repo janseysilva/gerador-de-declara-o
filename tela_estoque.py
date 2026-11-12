@@ -31,6 +31,7 @@ COR_FUNDO = COR_CARTAO = COR_AZUL = COR_AZUL_ESCURO = COR_AZUL_CLARO = None
 COR_TEXTO = COR_TEXTO_FRACO = COR_BORDA = COR_LINHA = COR_VERDE = COR_LARANJA = None
 FONTE = "Arial"
 COR_VERMELHO = "#B42318"
+TODAS_PESSOAS = "Todas as pessoas"
 _BASE = None
 
 
@@ -618,7 +619,7 @@ class DialogoDestinatario(_Dialogo):
         q.pack(fill="x", pady=(10, 0))
         q.entrada.configure(width=46)
         campo(self.interno, "Setor, turma ou cargo (opcional)", self.var_setor,
-              opcoes=["Cozinha", "Secretaria", "Direção", "Coordenação pedagógica", "Limpeza"]).pack(fill="x", pady=(8, 0))
+              opcoes=["Manipuladora de alimentos", "Secretaria", "Direção", "Pedagogia", "Limpeza"]).pack(fill="x", pady=(8, 0))
         self.botoes("Cadastrar", self._salvar)
         self.bind("<Return>", lambda e: self._salvar())
         self._foco = q.entrada
@@ -700,6 +701,84 @@ class DialogoQuantidade(_Dialogo):
     def abrir(self, foco=None):
         self._foco.selection_range(0, "end")
         return super().abrir(self._foco)
+
+
+class DialogoRelatorio(_Dialogo):
+    """
+    Qual relatório de estoque gerar: todos os materiais, só os que estão em estoque (acima de zero) ou só os que
+    estão com quantidade abaixo ou igual a um número. `materiais` é a lista (com saldo) usada só para mostrar
+    quantos entram. Resultado: None (cancelou), ("todos", None), ("tenho", None) ou ("ate", quantidade).
+    """
+
+    def __init__(self, pai, materiais, titulo_estoque):
+        super().__init__(pai, "Relatório de estoque")
+        self.materiais = materiais
+        self._era_ate = False
+        self.var_modo = tk.StringVar(value="todos")
+        self.var_qtd = tk.StringVar()
+        tk.Label(self.interno, text="Relatório de estoque", bg=COR_CARTAO, fg=COR_AZUL_ESCURO,
+                 font=(FONTE, 13, "bold")).pack(anchor="w")
+        tk.Label(self.interno, text="{}. Escolha quais materiais entram no relatório.".format(titulo_estoque),
+                 bg=COR_CARTAO, fg=COR_TEXTO_FRACO, font=(FONTE, 9), anchor="w", justify="left",
+                 wraplength=440).pack(anchor="w", pady=(4, 10))
+        Chip(self.interno, "Todos os materiais (inclui os zerados)", self.var_modo, valor="todos").pack(anchor="w")
+        Chip(self.interno, "Só os que tenho em estoque (acima de zero)", self.var_modo, valor="tenho").pack(anchor="w", pady=(8, 0))
+        linha = tk.Frame(self.interno, bg=COR_CARTAO)
+        linha.pack(fill="x", pady=(8, 0))
+        Chip(linha, "Só os que estão abaixo ou iguais a", self.var_modo, valor="ate").pack(side="left")
+        self.entrada = ttk.Entry(linha, textvariable=self.var_qtd, style="Campo.TEntry", font=(FONTE, 10), width=9)
+        self.entrada.pack(side="left", padx=(10, 0))
+        tk.Label(self.interno, text="Na última opção, a quantidade vale para todos os materiais, na unidade de cada um "
+                 "(resma, frasco, caixa...), e os zerados também entram.", bg=COR_CARTAO,
+                 fg=COR_TEXTO_FRACO, font=(FONTE, 9), anchor="w", justify="left", wraplength=440).pack(anchor="w", pady=(8, 0))
+        self.lbl_conta = tk.Label(self.interno, text="", bg=COR_CARTAO, fg=COR_AZUL_ESCURO, font=(FONTE, 10, "bold"),
+                                  anchor="w", justify="left")
+        self.lbl_conta.pack(anchor="w", pady=(10, 0))
+        self.var_modo.trace_add("write", lambda *_: self._mudou())
+        self.var_qtd.trace_add("write", lambda *_: self._mudou())
+        self.botoes("Gerar PDF", self._ok, estilo="azul")
+        self.bind("<Return>", lambda e: self._ok())
+        self._mudou()
+
+    def _focar_numero(self):
+        if self.winfo_exists():
+            self.entrada.focus_set()
+
+    def _mudou(self):
+        if not self.winfo_exists():                          # a janelinha já fechou
+            return
+        if self.aviso.winfo_manager():                       # o aviso de erro some assim que a pessoa mexe
+            self.aviso.pack_forget()
+        ate = self.var_modo.get() == "ate"
+        self.entrada.configure(state="normal" if ate else "disabled")
+        if ate and not self._era_ate:
+            self.after(30, self._focar_numero)              # escolheu "abaixo ou iguais a": já pode digitar o número
+        self._era_ate = ate
+        if not ate:
+            n = len(est.selecionar_para_relatorio(self.materiais, self.var_modo.get()))
+            self.lbl_conta.configure(text=_plural(n, "material entra", "materiais entram") + " no relatório.")
+            return
+        try:
+            limite = est.ler_limite_relatorio(self.var_qtd.get())
+        except ErroEstoque:
+            self.lbl_conta.configure(text="Digite a quantidade para ver quantos materiais entram.")
+            return
+        n = len(est.selecionar_para_relatorio(self.materiais, "ate", limite))
+        self.lbl_conta.configure(text=_plural(n, "material entra", "materiais entram") + " no relatório.")
+
+    def _ok(self):
+        if self.var_modo.get() in ("todos", "tenho"):
+            self.resultado = (self.var_modo.get(), None)
+        else:
+            try:
+                self.resultado = ("ate", est.ler_limite_relatorio(self.var_qtd.get()))
+            except ErroEstoque as erro:
+                self.erro(str(erro))
+                return
+        self.destroy()
+
+    def abrir(self, foco=None):
+        return super().abrir(None)
 
 
 class DialogoImportarSaida(_Dialogo):
@@ -1363,21 +1442,41 @@ class PainelEstoque(tk.Frame):
             self._aviso("Material atualizado.", "ok")
 
     def _relatorio_pdf(self):
-        linhas = self.livro.materiais()
-        if not linhas:
+        todos = self.livro.materiais()
+        if not todos:
             self._aviso("Ainda não há materiais para o relatório.", "erro")
             return
+        escolha = DialogoRelatorio(self, todos, self.titulo).abrir()
+        if not escolha:
+            return                                   # cancelou
+        modo, limite = escolha
+        linhas = est.selecionar_para_relatorio(todos, modo, limite)
+        if not linhas:
+            if modo == "tenho":
+                self._aviso("Nenhum material tem quantidade em estoque. O relatório não foi gerado.", "erro")
+            else:
+                self._aviso("Nenhum material está com {} ou menos. O relatório não foi gerado.".format(
+                    texto_quantidade(limite)), "erro")
+            return
+        filtro = {"todos": "",
+                  "tenho": "Somente materiais que estão em estoque (quantidade acima de zero)",
+                  "ate": "Somente materiais com quantidade abaixo ou igual a {}".format(texto_quantidade(limite or 0))}[modo]
         agora = datetime.now()
         cfg = self.app.cfg
         pasta = os.path.join(cfg.get("pasta_saida") or os.path.join(_BASE.pasta_documentos(), "Declarações Escolares"),
                              "Estoque")
         logo = os.path.join(_BASE.pasta_dados(), _BASE.ARQ_LOGO)
         logo = logo if os.path.exists(logo) else ""
+        qual = self.titulo.replace("Estoque ", "").replace("de ", "")
+        if modo == "ate":
+            qual += " - ate {}".format(texto_quantidade(limite))
+        elif modo == "tenho":
+            qual += " - em estoque"
         caminho = os.path.join(pasta, _BASE.nome_arquivo_seguro("Relatório de estoque - {} - {}.pdf".format(
-            self.titulo.replace("Estoque ", "").replace("de ", ""), agora.strftime("%Y-%m-%d %H%M"))))
+            qual, agora.strftime("%Y-%m-%d %H%M"))))
         try:
             os.makedirs(pasta, exist_ok=True)
-            gerar_relatorio_pdf(caminho, cfg, "RELATÓRIO DE ESTOQUE", self.titulo, linhas, logo, agora)
+            gerar_relatorio_pdf(caminho, cfg, "RELATÓRIO DE ESTOQUE", self.titulo, linhas, logo, agora, filtro=filtro)
         except PermissionError:
             self._aviso("O arquivo está aberto em outro programa. Feche-o e tente de novo.", "erro")
             return
@@ -1833,12 +1932,37 @@ class PainelEstoque(tk.Frame):
             Chip(linha, texto, self.var_hist_tipo, valor).pack(side="left", padx=(0, 6))
         self.pesq_hist = CaixaPesquisa(linha, "Filtrar por material, destinatário ou observação")
         self.pesq_hist.pack(side="left", fill="x", expand=True, padx=(8, 0))
-        self.var_hist_tipo.trace_add("write", lambda *_: self._preencher_historico())
-        self.pesq_hist.var.trace_add("write", lambda *_: self._preencher_historico())
+        # Filtros: pessoa e dia (ou de um dia até outro). Valem junto com o tipo e a pesquisa acima.
+        self._hist_pessoas = {}
+        self._hist_pausado = False
+        self.var_hist_pessoa = tk.StringVar(value=TODAS_PESSOAS)
+        self.var_hist_dia, self.var_hist_dia_ate = tk.StringVar(), tk.StringVar()
+        filtros = tk.Frame(c, bg=COR_CARTAO)
+        filtros.pack(fill="x", pady=(0, 4))
+        q = campo(filtros, "Pessoa que recebeu", self.var_hist_pessoa, opcoes=[TODAS_PESSOAS], editavel=False)
+        q.pack(side="left", fill="x", expand=True)
+        self.cb_hist_pessoa = q.entrada
+        for titulo, var in (("Dia", self.var_hist_dia), ("Até o dia", self.var_hist_dia_ate)):
+            campo(filtros, titulo, var, largura=12).pack(side="left", padx=(8, 0))
+        botoes = tk.Frame(filtros, bg=COR_CARTAO)
+        botoes.pack(side="left", padx=(10, 0), pady=(17, 0))
+        Botao(botoes, "Hoje", self._historico_hoje, estilo="suave", pad_y=4, pad_x=12, raio=8,
+              fonte=(FONTE, 9, "bold")).pack(side="left")
+        Botao(botoes, "Limpar filtros", self._limpar_filtros_historico, estilo="suave", pad_y=4, pad_x=12, raio=8,
+              fonte=(FONTE, 9, "bold")).pack(side="left", padx=(6, 0))
+        info = tk.Frame(c, bg=COR_CARTAO)
+        info.pack(fill="x", pady=(0, 6))
+        self.lbl_hist_conta = tk.Label(info, text="", bg=COR_CARTAO, fg=COR_TEXTO_FRACO, font=(FONTE, 9, "bold"), anchor="w")
+        self.lbl_hist_conta.pack(side="left")
+        self.lbl_hist_aviso = tk.Label(info, text="", bg=COR_CARTAO, fg=COR_LARANJA, font=(FONTE, 9), anchor="w",
+                                       justify="left", wraplength=620)
+        self.lbl_hist_aviso.pack(side="left", padx=(12, 0))
+        for var in (self.var_hist_tipo, self.pesq_hist.var, self.var_hist_pessoa, self.var_hist_dia, self.var_hist_dia_ate):
+            var.trace_add("write", lambda *_: self._preencher_historico())
         quadro, self.tab_hist = _tabela(c, [
             ("quando", "Data e hora", 160, "w", False), ("tipo", "Tipo", 80, "w", False),
             ("dest", "Destinatário", 210, "w", False), ("itens", "Materiais", 360, "w", True),
-            ("sit", "Situação", 170, "w", False)], linhas=7 if self.baixa else 10)
+            ("sit", "Situação", 170, "w", False)], linhas=6 if self.baixa else 9)
         quadro.pack(fill="x")
         self.tab_hist.bind("<<TreeviewSelect>>", lambda e: self._ao_selecionar_historico())
         self.tab_hist.bind("<Double-1>", lambda e: self._ver_detalhes())
@@ -1854,11 +1978,63 @@ class PainelEstoque(tk.Frame):
         self.botao_repetir.definir_ativo(False)
         return f
 
+    def _atualizar_pessoas_historico(self):
+        """A lista de pessoas do filtro acompanha os destinatários cadastrados (nome e, se tiver, o setor)."""
+        pessoas = {}
+        for d in self.livro.destinatarios():
+            pessoas[d["nome"] + (" ({})".format(d["setor"]) if d["setor"] else "")] = d["id"]
+        self._hist_pessoas = pessoas
+        valores = [TODAS_PESSOAS] + list(pessoas)
+        self.cb_hist_pessoa.configure(values=valores)
+        if self.var_hist_pessoa.get() not in valores:
+            self._hist_pausado = True
+            self.var_hist_pessoa.set(TODAS_PESSOAS)
+            self._hist_pausado = False
+
+    def _filtros_historico(self):
+        """Lê os campos de filtro. Devolve (argumentos de livro.movimentos, avisos); campo ainda errado não filtra."""
+        args, avisos = {}, []
+        rotulo = self.var_hist_pessoa.get()
+        if rotulo in self._hist_pessoas:
+            args["destinatario_id"] = self._hist_pessoas[rotulo]
+        try:
+            args["dia_de"], args["dia_ate"] = est.intervalo_de_dias(self.var_hist_dia.get(), self.var_hist_dia_ate.get())
+        except ErroEstoque as erro:
+            avisos.append("{} (o filtro de dia ainda não está valendo)".format(erro))
+        return args, avisos
+
+    def _historico_hoje(self):
+        self._hist_pausado = True
+        self.var_hist_dia_ate.set("")
+        self._hist_pausado = False
+        self.var_hist_dia.set(datetime.now().strftime("%d/%m/%Y"))
+
+    def _limpar_filtros_historico(self):
+        self._hist_pausado = True
+        self.var_hist_tipo.set("todos")
+        self.pesq_hist.var.set("")
+        self.var_hist_pessoa.set(TODAS_PESSOAS)
+        for var in (self.var_hist_dia, self.var_hist_dia_ate):
+            var.set("")
+        self._hist_pausado = False
+        self._preencher_historico()
+
     def _preencher_historico(self):
+        if self._hist_pausado:
+            return
+        self._atualizar_pessoas_historico()
         _limpar_tabela(self.tab_hist)
         tipo = self.var_hist_tipo.get()
+        args, avisos = self._filtros_historico()
+        lista = self.livro.movimentos(None if tipo == "todos" else tipo, self.pesq_hist.var.get(), **args)
+        total = len(self.livro.movimentos())
+        filtrando = tipo != "todos" or bool(self.pesq_hist.var.get().strip()) or bool(args.get("destinatario_id")) or any(
+            args.get(k) not in (None, "") for k in ("dia_de", "dia_ate"))
+        self.lbl_hist_conta.configure(text="Mostrando {} de {}".format(_plural(len(lista), "registro", "registros"), total)
+                                      if filtrando else _plural(total, "registro", "registros"))
+        self.lbl_hist_aviso.configure(text="  ·  ".join(avisos))
         n = 0
-        for mov in self.livro.movimentos(None if tipo == "todos" else tipo, self.pesq_hist.var.get()):
+        for mov in lista:
             dest = mov["destinatario"]
             situacao = ""
             if mov["estornado"]:
@@ -1868,7 +2044,8 @@ class PainelEstoque(tk.Frame):
                 dest["nome"] if dest else "–", mov["resumo"], situacao), tags=("apagado",) if mov["estornado"] else ())
             n += 1
         if not n:
-            self.tab_hist.insert("", "end", values=("Nenhum registro ainda.", "", "", "", ""), tags=("apagado",))
+            self.tab_hist.insert("", "end", values=("Nenhum registro com esses filtros." if filtrando else "Nenhum registro ainda.",
+                                                    "", "", "", ""), tags=("apagado",))
         self._ao_selecionar_historico()
 
     def _selecionado_historico(self):
@@ -1957,8 +2134,8 @@ def _fontes_pdf():
     return mapa
 
 
-def gerar_relatorio_pdf(caminho, cfg, titulo, subtitulo, linhas, logo, agora):
-    """PDF com o saldo de cada material (cabeçalho da escola igual ao das declarações)."""
+def gerar_relatorio_pdf(caminho, cfg, titulo, subtitulo, linhas, logo, agora, filtro=""):
+    """PDF com o saldo de cada material (cabeçalho da escola igual ao das declarações). `filtro` vai no resumo."""
     from reportlab.lib import colors
     from reportlab.lib.pagesizes import A4
     from reportlab.lib.styles import ParagraphStyle
@@ -2045,6 +2222,8 @@ def gerar_relatorio_pdf(caminho, cfg, titulo, subtitulo, linhas, logo, agora):
     tabela.setStyle(TableStyle(estilos))
 
     resumo = "Emitido em {}  ·  {}".format(agora.strftime("%d/%m/%Y às %H:%M"), _plural(len(linhas), "material", "materiais"))
+    if filtro:
+        resumo += '<br/><font name="{}">{}</font>'.format(F["Helvetica-Bold"], filtro.replace("&", "&amp;").replace("<", "&lt;"))
     est_resumo = ParagraphStyle("resumo", fontName=F["Helvetica"], fontSize=9, leading=11, textColor=colors.Color(0.27, 0.27, 0.27),
                                 alignment=1)
     doc = SimpleDocTemplate(caminho, pagesize=A4, leftMargin=esq, rightMargin=dir_, topMargin=margem_topo,

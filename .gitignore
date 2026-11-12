@@ -5,6 +5,3 @@ __pycache__/
 # dados de alunos nunca vão para o GitHub
 TXTALUNO*.txt
 saida/
-
-# modelos do leitor de nota (OCR): 17 MB, ficam só neste PC; entram no instalador por outro caminho
-modelos_ocr/

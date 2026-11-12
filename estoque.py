@@ -19,7 +19,7 @@ import re
 import socket
 import unicodedata
 import uuid
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 
 UNIDADES = ["unidade", "caixa", "pacote", "resma", "rolo", "par", "kg", "litro",
             "frasco", "galão", "metro", "folha", "kit"]
@@ -88,6 +88,84 @@ def ler_minimo(texto):
     if v is None or v < 0:
         raise ErroEstoque("O estoque mínimo “{}” não é válido. Use um número (ou deixe vazio).".format(t))
     return round(v, 3)
+
+
+def ler_limite_relatorio(texto):
+    """Quantidade do relatório "abaixo ou igual a": aceita zero (só os zerados); não aceita vazio nem negativo."""
+    t = str(texto).strip()
+    if not t:
+        raise ErroEstoque("Digite a quantidade.")
+    v = ler_numero(t)
+    if v is None:
+        raise ErroEstoque("A quantidade “{}” não é um número.".format(t))
+    if v < 0:
+        raise ErroEstoque("A quantidade não pode ser negativa.")
+    if v > 1000000:
+        raise ErroEstoque("A quantidade está grande demais. Confira o número digitado.")
+    return round(v, 3)
+
+
+def filtrar_por_quantidade(materiais, limite=None):
+    """Materiais com saldo menor ou igual a `limite`. Sem limite, devolve todos (mesma ordem da lista)."""
+    if limite is None:
+        return list(materiais)
+    return [m for m in materiais if m["saldo"] <= limite + 1e-9]
+
+
+def filtrar_em_estoque(materiais):
+    """Só os materiais que ainda têm alguma quantidade (saldo acima de zero); os zerados ficam de fora."""
+    return [m for m in materiais if m["saldo"] > 1e-9]
+
+
+def selecionar_para_relatorio(materiais, modo, limite=None):
+    """
+    Os materiais de cada relatório: "todos" (o cadastro inteiro, com os zerados), "tenho" (só os que estão em
+    estoque, acima de zero) ou "ate" (quantidade abaixo ou igual a `limite`). Mantém a ordem da lista.
+    """
+    if modo == "tenho":
+        return filtrar_em_estoque(materiais)
+    if modo == "ate":
+        return filtrar_por_quantidade(materiais, limite)
+    return list(materiais)
+
+
+def ler_data(texto, hoje=None):
+    """
+    Data digitada no filtro do histórico: '12/11/2026', '12/11/26', '12/11' (ano de hoje), '12-11-2026',
+    'hoje' ou 'ontem'. Vazio devolve None; o que não for data dá ErroEstoque.
+    """
+    t = normalizar(texto)
+    if not t:
+        return None
+    hoje = hoje or date.today()
+    if t == "hoje":
+        return hoje
+    if t == "ontem":
+        return hoje - timedelta(days=1)
+    m = re.fullmatch(r"(\d{1,2})[/.\-](\d{1,2})(?:[/.\-](\d{2}|\d{4}))?", t)
+    if not m:
+        raise ErroEstoque("A data “{}” não está certa. Use dia/mês/ano, por exemplo 12/11/2026.".format(texto.strip()))
+    dia, mes = int(m.group(1)), int(m.group(2))
+    ano = hoje.year if not m.group(3) else int(m.group(3))
+    if ano < 100:
+        ano += 2000
+    try:
+        return date(ano, mes, dia)
+    except ValueError:
+        raise ErroEstoque("A data “{}” não existe. Confira o dia e o mês.".format(texto.strip()))
+
+
+def intervalo_de_dias(texto_de, texto_ate, hoje=None):
+    """
+    Os dois campos de dia do filtro do histórico viram (de, ate). Só o primeiro preenchido: aquele dia apenas;
+    só o segundo: até aquele dia; os dois: de um dia até o outro. Os dois vazios: (None, None).
+    """
+    de, ate = ler_data(texto_de, hoje), ler_data(texto_ate, hoje)
+    if de and ate is None:
+        ate = de
+    if de and ate and ate < de:
+        raise ErroEstoque("O dia final ({}) é antes do dia inicial ({}).".format(ate.strftime("%d/%m/%Y"), de.strftime("%d/%m/%Y")))
+    return de, ate
 
 
 def texto_quantidade(valor):
@@ -420,8 +498,13 @@ class Livro:
                 "destinatario": dest, "obs": mov["obs"], "estornado": bool(mov["estornado_em"]),
                 "estornado_em": estornado_em, "motivo_estorno": mov["motivo_estorno"], "pc": mov["pc"]}
 
-    def movimentos(self, tipo=None, texto="", incluir_estornados=True):
-        """Entradas e saídas, da mais nova para a mais antiga."""
+    def movimentos(self, tipo=None, texto="", incluir_estornados=True, destinatario_id=None,
+                   dia_de=None, dia_ate=None):
+        """
+        Entradas e saídas, da mais nova para a mais antiga. Filtros opcionais (todos ao mesmo tempo):
+        `destinatario_id` (só as saídas dessa pessoa; entradas não têm destinatário) e `dia_de`/`dia_ate`
+        (datas, inclusive).
+        """
         q = normalizar(texto)
         lista = []
         for mid in reversed(self._ordem):
@@ -430,7 +513,12 @@ class Livro:
                 continue
             if mov["estornado_em"] and not incluir_estornados:
                 continue
+            if destinatario_id and mov.get("destinatario") != destinatario_id:
+                continue
             x = self._expandir(mov)
+            quando = x["quando"]
+            if dia_de and quando.date() < dia_de or dia_ate and quando.date() > dia_ate:
+                continue
             if q:
                 alvo = normalizar(" ".join([x["resumo"], x["obs"],
                                             (x["destinatario"] or {}).get("nome", ""),

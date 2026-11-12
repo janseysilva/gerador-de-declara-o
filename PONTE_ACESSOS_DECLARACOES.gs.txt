@@ -1,0 +1,484 @@
+/************************************************************************
+ *  PONTE DE ACESSOS — Declarações Escolares
+ *  (Google Apps Script — cole este código no editor de script da planilha)
+ *
+ *  O que ela faz:
+ *    - guarda as contas (e-mail, senha, perfis) numa planilha
+ *    - responde ao programa: cadastrar, entrar, recuperar e alterar a senha
+ *    - obedece ao administrador: liberar, bloquear, mudar perfis e prazo,
+ *      definir senha e remover contas
+ *
+ *  PERFIS (uma pessoa pode ter mais de um):
+ *    declaracoes  -> aba Declarações
+ *    estoque      -> abas Estoque pedagógico e Estoque de limpeza
+ *    admin        -> cadastra as pessoas e mexe na Configuração
+ *                    (quem é administrador vê tudo)
+ *
+ *  ANTES DE USAR, preencha as DUAS linhas abaixo (ID_PLANILHA e EMAIL_ADMIN),
+ *  rode a função "preparar" uma vez e publique como aplicativo da Web.
+ *
+ *  Esta ponte é SEPARADA da ponte do Frequência Inteligente: as contas de um
+ *  programa não valem no outro.
+ ************************************************************************/
+
+// 1) Cole aqui o ID da planilha (está no endereço dela, entre /d/ e /edit)
+var ID_PLANILHA = "COLE_AQUI_O_ID_DA_PLANILHA";
+
+// 2) E-mail da pessoa que será a primeira administradora. A função "preparar"
+//    cria a conta dela e MANDA POR E-MAIL uma senha provisória (só quem abrir
+//    essa caixa de e-mail consegue entrar). Depois ela troca a senha no programa.
+var EMAIL_ADMIN = "COLE_AQUI_O_EMAIL_DO_ADMINISTRADOR";
+
+var ABA = "Usuarios";
+var NOME_PROGRAMA = "Declarações Escolares";
+var PERFIS_VALIDOS = ["declaracoes", "estoque", "admin"];
+var MAX_TENTATIVAS = 5;        // senhas erradas seguidas antes de travar
+var MINUTOS_BLOQUEIO = 15;     // quanto tempo a conta fica travada
+var MINUTOS_ENTRE_PEDIDOS = 10; // intervalo mínimo entre pedidos de nova senha
+var SENHA_MINIMA = 8;          // tamanho mínimo da senha (vale ao criar ou trocar; contas antigas continuam entrando)
+var MAX_PENDENTES = 20;        // cadastros aguardando liberação ao mesmo tempo; passou disso, não aceita novos
+                               // (evita encher a planilha e a sua caixa de e-mail com cadastros falsos)
+
+// Senhas fáceis de adivinhar (em minúsculas). Além desta lista, o servidor recusa senhas só com
+// poucos caracteres diferentes, em sequência (12345678, abcdefgh) ou que contenham o seu próprio e-mail.
+var SENHAS_COMUNS = ["12345678", "123456789", "1234567890", "87654321", "11111111", "00000000",
+  "12341234", "11223344", "12121212", "password", "password1", "password123", "senha123",
+  "senha1234", "senha12345", "senha@123", "mudar123", "mudar@123", "qwertyui", "qwerty123",
+  "qwertyuiop", "asdfghjk", "abcd1234", "abc12345", "abc123456", "admin123", "admin1234",
+  "admin@123", "semed123", "semed@123", "semed2025", "semed2026", "semed2027", "escola123",
+  "escola2026", "manaus123", "manaus2026", "amazonas", "brasil123", "brasil2026", "iloveyou",
+  "letmein1", "welcome1", "teste123", "teste1234", "usuario1", "usuario123", "estoque123",
+  "declaracao", "declaracoes", "secretaria", "diretora123", "professor1", "professora1"];
+
+var COLUNAS = ["email", "nome", "salt", "senha_hash", "status", "perfis",
+               "data_cadastro", "data_aprovacao", "validade", "pediu_senha",
+               "tentativas", "bloqueado_ate"];
+
+
+/* ------------------------------------------------------------------ *
+ *  Preparação — RODE A FUNÇÃO "preparar" UMA VEZ antes de publicar.
+ *  (Pode rodar de novo sem problema: não mexe no que já está preenchido.)
+ * ------------------------------------------------------------------ */
+function preparar() {
+  var aba = _aba();
+  if (aba.getLastRow() < 1 || aba.getRange(1, 1).getValue() !== "email") {
+    aba.clear();
+    aba.getRange(1, 1, 1, COLUNAS.length).setValues([COLUNAS]);
+    aba.getRange(1, 1, 1, COLUNAS.length).setFontWeight("bold")
+       .setBackground("#2F528F").setFontColor("#FFFFFF");
+    aba.setFrozenRows(1);
+  }
+  // Datas e números como TEXTO, para a planilha não converter sozinha.
+  var textoPuro = ["email", "salt", "senha_hash", "data_cadastro", "data_aprovacao",
+                   "validade", "pediu_senha", "tentativas", "bloqueado_ate", "perfis"];
+  for (var i = 0; i < textoPuro.length; i++) {
+    var col = COLUNAS.indexOf(textoPuro[i]) + 1;
+    aba.getRange(2, col, Math.max(aba.getMaxRows() - 1, 1), 1).setNumberFormat("@");
+  }
+  // Dispara o pedido de permissão de e-mail (necessário uma vez).
+  MailApp.getRemainingDailyQuota();
+
+  var admin = _limpaEmail(EMAIL_ADMIN);
+  if (admin && admin.indexOf("@") > 0 && _acharLinha(admin) < 0) {
+    var provisoria = _senhaProvisoria();
+    var salt = Utilities.getUuid();
+    _aba().appendRow([admin, "Administrador", salt, _hash(salt + provisoria),
+                      "autorizado", "declaracoes,estoque,admin", _hoje(), _hoje(),
+                      "", "", "0", ""]);
+    _enviarSenha(admin, provisoria);
+    return "Planilha pronta. A senha provisória do administrador foi enviada para " + admin + ".";
+  }
+  return "Planilha pronta.";
+}
+
+
+/* ------------------------------------------------------------------ *
+ *  Entradas HTTP
+ * ------------------------------------------------------------------ */
+function doGet(e) {
+  return _json({ ok: true, servico: "Ponte de acessos — " + NOME_PROGRAMA });
+}
+
+function doPost(e) {
+  var trava = LockService.getScriptLock();
+  try {
+    trava.waitLock(20000);
+  } catch (err) {
+    return _json({ ok: false, erro: "ocupado" });
+  }
+  try {
+    var req = JSON.parse(e.postData.contents);
+    return _json(_processar(req));
+  } catch (err) {
+    return _json({ ok: false, erro: "falha", detalhe: String(err) });
+  } finally {
+    trava.releaseLock();
+  }
+}
+
+
+function _processar(req) {
+  var acao = req.acao;
+
+  /* ---------------- Ações de quem usa o programa ---------------- */
+
+  if (acao === "cadastrar") {
+    var email = _limpaEmail(req.email);
+    var nome = String(req.nome || "").trim();
+    if (!nome) return { ok: false, erro: "sem_nome" };
+    if (email.indexOf("@") < 1) return { ok: false, erro: "email_invalido" };
+    var ruim = _checarSenha(req.senha, email);
+    if (ruim) return ruim;
+    if (_acharLinha(email) > 0) {
+      return { ok: false, erro: "ja_cadastrado", status: _lerPorEmail(email).status };
+    }
+    var todosCadastros = _lerTodos(), pendentes = 0;
+    for (var k = 0; k < todosCadastros.length; k++)
+      if (todosCadastros[k].status === "pendente") pendentes++;
+    if (pendentes >= MAX_PENDENTES) return { ok: false, erro: "muitos_pendentes" };
+    var salt = Utilities.getUuid();
+    _aba().appendRow([email, nome, salt, _hash(salt + req.senha), "pendente", "",
+                      _hoje(), "", "", "", "0", ""]);
+    _avisarAdmin(email, nome);
+    return { ok: true, status: "pendente" };
+  }
+
+  if (acao === "entrar") {
+    var a = _autenticar(req.email, req.senha);
+    if (!a.ok) return a;
+    var r = a.linha;
+    return { ok: true, nome: r.nome, perfis: _listaPerfis(r), validade: r.validade };
+  }
+
+  if (acao === "recuperar") {
+    var email3 = _limpaEmail(req.email);
+    var linha3 = _acharLinha(email3);
+    if (linha3 < 0) return { ok: false, motivo: "nao_cadastrado" };
+    var r3 = _lerPorEmail(email3);
+    var pediu = Number(r3.pediu_senha) || 0;
+    if (pediu && Date.now() - pediu < MINUTOS_ENTRE_PEDIDOS * 60000)
+      return { ok: false, motivo: "aguarde", minutos: MINUTOS_ENTRE_PEDIDOS };
+    var provisoria = _senhaProvisoria();
+    var salt3 = Utilities.getUuid();
+    _escrever(linha3, { salt: salt3, senha_hash: _hash(salt3 + provisoria),
+                        pediu_senha: _agoraTexto(), tentativas: "0", bloqueado_ate: "" });
+    _enviarSenha(email3, provisoria);
+    return { ok: true };
+  }
+
+  if (acao === "alterar_senha") {
+    var a4 = _autenticar(req.email, req.senha, true);
+    if (!a4.ok) return a4;
+    var ruim4 = _checarSenha(req.nova_senha, a4.linha.email);
+    if (ruim4) return ruim4;
+    var salt4 = Utilities.getUuid();
+    _escrever(a4.linha._linha, { salt: salt4, senha_hash: _hash(salt4 + req.nova_senha),
+                                 pediu_senha: "" });
+    return { ok: true };
+  }
+
+  /* ---------------- Ações do ADMINISTRADOR ----------------
+   * Cada uma manda o e-mail e a senha de quem pede; o servidor confere que
+   * é uma conta liberada com o perfil "admin". */
+
+  if (acao === "listar" || acao === "atualizar" || acao === "definir_senha" || acao === "remover") {
+    var adm = _exigirAdmin(req);
+    if (!adm.ok) return adm;
+    var eu = adm.linha.email;
+
+    if (acao === "listar") {
+      var todos = _lerTodos();
+      var lista = [];
+      for (var i = 0; i < todos.length; i++) {
+        var t = todos[i];
+        lista.push({ nome: t.nome, email: t.email, status: t.status,
+                     perfis: _listaPerfis(t), data_cadastro: t.data_cadastro,
+                     validade: t.validade, pediu_senha: !!t.pediu_senha });
+      }
+      return { ok: true, lista: lista };
+    }
+
+    var alvo = _limpaEmail(req.alvo);
+    var linha5 = _acharLinha(alvo);
+    if (linha5 < 0) return { ok: false, erro: "nao_encontrado" };
+
+    if (acao === "atualizar") {
+      var antes = _lerPorEmail(alvo);
+      var campos = {};
+      if (req.perfis !== undefined) {
+        var perfis = [];
+        for (var p = 0; p < PERFIS_VALIDOS.length; p++)
+          if ((req.perfis || []).indexOf(PERFIS_VALIDOS[p]) >= 0) perfis.push(PERFIS_VALIDOS[p]);
+        campos.perfis = perfis.join(",");
+      }
+      if (req.status !== undefined) {
+        if (["pendente", "autorizado", "bloqueado"].indexOf(req.status) < 0)
+          return { ok: false, erro: "status_invalido" };
+        campos.status = req.status;
+      }
+      if (req.validade !== undefined) {
+        var v = String(req.validade || "").trim();
+        if (v && !/^\d{4}-\d{2}-\d{2}$/.test(v)) return { ok: false, erro: "validade_invalida" };
+        campos.validade = v;
+      }
+      if (alvo === eu) {   // ninguém tira o próprio acesso de administrador sem querer
+        var perfisFinais = campos.perfis !== undefined ? campos.perfis : antes.perfis;
+        var statusFinal = campos.status !== undefined ? campos.status : antes.status;
+        if (statusFinal !== "autorizado" || perfisFinais.split(",").indexOf("admin") < 0)
+          return { ok: false, erro: "voce_mesmo" };
+      }
+      if (campos.status === "autorizado" && antes.status !== "autorizado") {
+        campos.data_aprovacao = _hoje();
+        campos.tentativas = "0";
+        campos.bloqueado_ate = "";
+      }
+      _escrever(linha5, campos);
+      var depois = _lerPorEmail(alvo);
+      if (campos.status === "autorizado" && antes.status !== "autorizado")
+        _avisarLiberado(alvo, depois.validade);
+      return { ok: true, perfis: _listaPerfis(depois), status: depois.status, validade: depois.validade };
+    }
+
+    if (acao === "definir_senha") {
+      var ruim6 = _checarSenha(req.nova_senha, alvo);
+      if (ruim6) return ruim6;
+      var salt6 = Utilities.getUuid();
+      _escrever(linha5, { salt: salt6, senha_hash: _hash(salt6 + req.nova_senha),
+                          pediu_senha: "", tentativas: "0", bloqueado_ate: "" });
+      return { ok: true };
+    }
+
+    if (acao === "remover") {
+      if (alvo === eu) return { ok: false, erro: "voce_mesmo" };
+      _aba().deleteRow(linha5);
+      return { ok: true };
+    }
+  }
+
+  return { ok: false, erro: "acao_desconhecida" };
+}
+
+
+/* ------------------------------------------------------------------ *
+ *  Regras para ESCOLHER uma senha (as mesmas do programa, em acesso.py)
+ * ------------------------------------------------------------------ */
+function _senhaFraca(senha, email) {
+  var s = String(senha || "").toLowerCase();
+  var distintos = {}, qtd = 0, i;
+  for (i = 0; i < s.length; i++)
+    if (!distintos[s.charAt(i)]) { distintos[s.charAt(i)] = true; qtd++; }
+  if (qtd < 4) return true;                                    // 11111111, abababab...
+  var sobe = true, desce = true;
+  for (i = 1; i < s.length; i++) {
+    var passo = s.charCodeAt(i) - s.charCodeAt(i - 1);
+    if (passo !== 1) sobe = false;
+    if (passo !== -1) desce = false;
+  }
+  if (sobe || desce) return true;                              // 12345678, abcdefgh, 87654321
+  if (SENHAS_COMUNS.indexOf(s) >= 0) return true;
+  var local = String(email || "").toLowerCase().split("@")[0];
+  if (local.length >= 4 && (s.indexOf(local) >= 0 || local.indexOf(s) >= 0)) return true;   // o próprio e-mail
+  return false;
+}
+
+// Devolve null se a senha serve; senão, o erro para responder ao programa.
+function _checarSenha(senha, email) {
+  if (String(senha || "").length < SENHA_MINIMA) return { ok: false, erro: "senha_curta" };
+  if (_senhaFraca(senha, email)) return { ok: false, erro: "senha_fraca" };
+  return null;
+}
+
+
+/* ------------------------------------------------------------------ *
+ *  Conferência de senha (com trava depois de várias tentativas erradas)
+ * ------------------------------------------------------------------ */
+function _autenticar(email, senha, aceitarPendente) {
+  var e = _limpaEmail(email);
+  var linha = _acharLinha(e);
+  if (linha < 0) return { ok: false, motivo: "nao_cadastrado" };
+  var r = _lerPorEmail(e);
+  r._linha = linha;
+  var ate = Number(r.bloqueado_ate) || 0;
+  if (ate && Date.now() < ate)
+    return { ok: false, motivo: "muitas_tentativas", minutos: Math.ceil((ate - Date.now()) / 60000) };
+  if (_hash(r.salt + String(senha || "")) !== r.senha_hash) {
+    var n = (Number(r.tentativas) || 0) + 1;
+    if (n >= MAX_TENTATIVAS) {
+      _escrever(linha, { tentativas: "0", bloqueado_ate: String(Date.now() + MINUTOS_BLOQUEIO * 60000) });
+      return { ok: false, motivo: "muitas_tentativas", minutos: MINUTOS_BLOQUEIO };
+    }
+    _escrever(linha, { tentativas: String(n) });
+    return { ok: false, motivo: "senha", restantes: MAX_TENTATIVAS - n };
+  }
+  if (r.tentativas !== "0" || r.bloqueado_ate)
+    _escrever(linha, { tentativas: "0", bloqueado_ate: "" });
+  if (!aceitarPendente) {
+    if (r.status === "pendente") return { ok: false, motivo: "pendente" };
+    if (r.status === "bloqueado") return { ok: false, motivo: "bloqueado" };
+    if (r.validade && _hoje() > r.validade)
+      return { ok: false, motivo: "expirado", validade: r.validade };
+  } else if (r.status === "bloqueado") {
+    return { ok: false, motivo: "bloqueado" };
+  }
+  return { ok: true, linha: r };
+}
+
+function _exigirAdmin(req) {
+  var a = _autenticar(req.email, req.senha);
+  if (!a.ok) return a;
+  if (_listaPerfis(a.linha).indexOf("admin") < 0) return { ok: false, erro: "sem_permissao" };
+  return a;
+}
+
+// Quem é "admin" enxerga tudo: a lista já vem completa para o programa.
+function _listaPerfis(r) {
+  var lista = [];
+  var bruto = String(r.perfis || "").split(",");
+  for (var i = 0; i < PERFIS_VALIDOS.length; i++)
+    if (bruto.indexOf(PERFIS_VALIDOS[i]) >= 0) lista.push(PERFIS_VALIDOS[i]);
+  if (lista.indexOf("admin") >= 0) return PERFIS_VALIDOS.slice();
+  return lista;
+}
+
+
+/* ------------------------------------------------------------------ *
+ *  E-mails
+ * ------------------------------------------------------------------ */
+function _enviarSenha(email, provisoria) {
+  try {
+    MailApp.sendEmail(email, NOME_PROGRAMA + " — senha provisória",
+      "Olá!\n\n" +
+      "Esta é a sua senha provisória para o " + NOME_PROGRAMA + ":\n\n" +
+      "      " + provisoria + "\n\n" +
+      "Entre no programa com ela e depois use a opção " +
+      "\"Alterar minha senha\" para escolher uma senha sua.\n\n" +
+      "Se não foi você que pediu, avise o administrador.");
+  } catch (err) {
+    // Sem e-mail, o administrador ainda pode definir a senha pela tela de usuários.
+  }
+}
+
+function _avisarAdmin(email, nome) {
+  try {
+    MailApp.sendEmail(_limpaEmail(EMAIL_ADMIN),
+      NOME_PROGRAMA + " — novo cadastro aguardando liberação",
+      "Novo cadastro para liberar:\n\n" +
+      "Nome:   " + nome + "\n" +
+      "E-mail: " + email + "\n\n" +
+      "Abra o programa, entre como administrador e use \"Usuários\" para escolher os perfis e liberar.");
+  } catch (err) {}
+}
+
+function _avisarLiberado(email, validade) {
+  try {
+    MailApp.sendEmail(email, NOME_PROGRAMA + " — acesso liberado",
+      "Olá!\n\nSeu acesso ao " + NOME_PROGRAMA + " foi liberado" +
+      (validade ? " e vale até " + _dataBr(validade) : "") + ".\n\n" +
+      "É só abrir o programa e entrar com seu e-mail e senha.");
+  } catch (err) {}
+}
+
+
+/* ------------------------------------------------------------------ *
+ *  Apoio
+ * ------------------------------------------------------------------ */
+function _aba() {
+  var planilha = SpreadsheetApp.openById(ID_PLANILHA);
+  var aba = planilha.getSheetByName(ABA);
+  if (!aba) aba = planilha.insertSheet(ABA);
+  return aba;
+}
+
+function _json(obj) {
+  return ContentService.createTextOutput(JSON.stringify(obj))
+    .setMimeType(ContentService.MimeType.JSON);
+}
+
+function _limpaEmail(x) {
+  return String(x || "").trim().toLowerCase();
+}
+
+function _hash(texto) {
+  var bytes = Utilities.computeDigest(
+    Utilities.DigestAlgorithm.SHA_256, texto, Utilities.Charset.UTF_8);
+  var hex = "";
+  for (var i = 0; i < bytes.length; i++) {
+    var b = bytes[i] < 0 ? bytes[i] + 256 : bytes[i];
+    var s = b.toString(16);
+    hex += (s.length === 1 ? "0" : "") + s;
+  }
+  return hex;
+}
+
+function _senhaProvisoria() {
+  var letras = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  var senha = "";
+  for (var i = 0; i < 8; i++)
+    senha += letras.charAt(Math.floor(Math.random() * letras.length));
+  return senha;
+}
+
+function _fuso() {
+  return Session.getScriptTimeZone() || "America/Manaus";
+}
+
+function _hoje() {
+  return Utilities.formatDate(new Date(), _fuso(), "yyyy-MM-dd");
+}
+
+function _agoraTexto() {
+  return String(Date.now());
+}
+
+function _dataBr(iso) {
+  if (!iso) return "";
+  var p = String(iso).split("-");
+  return p.length === 3 ? p[2] + "/" + p[1] + "/" + p[0] : iso;
+}
+
+function _valorTexto(v) {
+  // A planilha pode devolver data de verdade; volta sempre como texto yyyy-MM-dd.
+  return (v instanceof Date) ? Utilities.formatDate(v, _fuso(), "yyyy-MM-dd") : String(v);
+}
+
+function _acharLinha(email) {
+  var aba = _aba();
+  var ultima = aba.getLastRow();
+  if (ultima < 2) return -1;
+  var emails = aba.getRange(2, 1, ultima - 1, 1).getValues();
+  for (var i = 0; i < emails.length; i++) {
+    if (_limpaEmail(emails[i][0]) === email) return i + 2;
+  }
+  return -1;
+}
+
+function _lerPorEmail(email) {
+  var linha = _acharLinha(email);
+  if (linha < 0) return null;
+  var valores = _aba().getRange(linha, 1, 1, COLUNAS.length).getValues()[0];
+  var r = {};
+  for (var i = 0; i < COLUNAS.length; i++) r[COLUNAS[i]] = _valorTexto(valores[i]);
+  return r;
+}
+
+function _lerTodos() {
+  var aba = _aba();
+  var ultima = aba.getLastRow();
+  if (ultima < 2) return [];
+  var valores = aba.getRange(2, 1, ultima - 1, COLUNAS.length).getValues();
+  var saida = [];
+  for (var i = 0; i < valores.length; i++) {
+    var r = {};
+    for (var j = 0; j < COLUNAS.length; j++) r[COLUNAS[j]] = _valorTexto(valores[i][j]);
+    if (r.email) saida.push(r);
+  }
+  return saida;
+}
+
+function _escrever(linha, campos) {
+  var aba = _aba();
+  for (var chave in campos) {
+    var coluna = COLUNAS.indexOf(chave) + 1;
+    if (coluna > 0) aba.getRange(linha, coluna).setValue(campos[chave]);
+  }
+}

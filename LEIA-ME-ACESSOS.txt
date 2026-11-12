@@ -1,0 +1,70 @@
+DECLARAÇÕES ESCOLARES - ACESSO COM E-MAIL E SENHA (guia do administrador)
+=========================================================================
+
+ONDE ESTÁ (publicado em 12/11/2026)
+  - Planilha "Acessos - Declarações Escolares", na conta da SEMED do administrador, aba "Usuarios".
+  - Projeto Apps Script "Ponte de acessos - Declarações Escolares", implantação (hoje "Versão 2", de 12/11/2026 14:58, com as regras de senha novas; App da Web, executa como o dono,
+    acesso "Qualquer pessoa"). O endereço /exec já está na linha URL_ACESSOS do arquivo acesso.py.
+  - O primeiro administrador é o e-mail que estava na linha EMAIL_ADMIN do script; a senha provisória foi mandada para a caixa dele.
+
+COMO FUNCIONA
+  - As contas ficam numa planilha do Google, com um pequeno programa (Apps Script) que responde ao
+    Declarações Escolares: PONTE_ACESSOS_DECLARACOES.gs.txt. É uma planilha NOVA, separada da do
+    Frequência Inteligente: as contas de um programa não valem no outro.
+  - Cada pessoa tem PERFIS (pode ter mais de um):
+        Declarações     -> aba Declarações
+        Estoque         -> abas Estoque pedagógico e Estoque de limpeza
+        Administrador   -> vê tudo, cadastra as pessoas (Usuários) e abre a Configuração
+  - A senha nunca fica escrita na planilha (só um código dela). Erro de senha 5 vezes trava a conta por
+    15 minutos. Quem já entrou num computador entra NA HORA por até 7 dias (ver ENTRADA RÁPIDA).
+  - Senha nova (ao criar a conta, trocar ou quando você define a de outra pessoa): pelo menos 8 letras ou
+    números, e o servidor RECUSA senhas fáceis: as mais comuns (12345678, senha123, semed2026...), sequências
+    (12345678, abcdefgh), poucos caracteres repetidos (11111111) e senhas que contêm o próprio e-mail.
+    A regra vale só ao ESCOLHER a senha: contas antigas com senha mais curta continuam entrando.
+  - Cadastros novos esperando liberação: no máximo 20 ao mesmo tempo. Passou disso, o programa avisa "Há muitos
+    cadastros esperando liberação" e não aceita mais, para ninguém encher a planilha e a sua caixa de e-mail
+    com cadastros falsos. É só liberar ou remover os pendentes em "Usuários" que abre vaga de novo.
+  - O endereço do servidor está no código do programa (e o código é público no GitHub), então o endereço NÃO é
+    segredo: quem protege as contas são as senhas, o travamento por erros e as regras acima.
+
+PUBLICAR A PONTE (uma vez só)
+  1. No Google Drive, crie uma planilha em branco (ex.: "Acessos - Declarações Escolares").
+  2. Nela: Extensões > Apps Script. Apague o que houver e cole o texto de PONTE_ACESSOS_DECLARACOES.gs.txt.
+  3. Preencha as DUAS linhas do começo:
+        ID_PLANILHA  -> o código no endereço da planilha, entre /d/ e /edit
+        EMAIL_ADMIN  -> o e-mail da primeira pessoa administradora (uma caixa que ela abre mesmo)
+  4. Escolha a função "preparar" e clique em Executar. O Google pede permissão (planilha e e-mail): autorize.
+     A ponte cria a conta do administrador e MANDA POR E-MAIL uma senha provisória.
+  5. Implantar > Nova implantação > tipo "App da Web": Executar como "Eu", Quem tem acesso "Qualquer pessoa".
+     Copie o endereço que termina em /exec.
+  6. Esse endereço vai na linha URL_ACESSOS do arquivo acesso.py (quem mantém o programa faz isso e gera
+     o instalador). Enquanto ela estiver vazia, o programa abre sem pedir senha, como sempre foi.
+  NUNCA use "Nova implantação" de novo para atualizar o script: o endereço mudaria e o programa de todo
+  mundo pararia. Para atualizar: Implantar > Gerenciar implantações > lápis > Versão: Nova versão > Implantar.
+
+ENTRADA RÁPIDA (12/11/2026)
+  - A rede da SEMED perde conexões e o servidor às vezes leva de 4 a 16 segundos para responder. Por isso, quem já
+    entrou num computador (a senha confere com a cópia guardada ali e a cópia tem menos de 7 dias) entra NA HORA, sem
+    esperar o servidor. Depois de abrir, o programa confirma o acesso com o servidor em segundo plano:
+      igual               -> nada acontece (a cópia é renovada por mais 7 dias)
+      você mudou o acesso -> aviso e volta para a tela de entrada; ao entrar de novo já vale o acesso novo
+      bloqueado, prazo vencido, conta removida ou senha trocada -> aviso e volta para a tela de entrada; a cópia é apagada
+      sem resposta        -> nada muda; tenta de novo a cada 2 minutos enquanto o programa estiver aberto
+  - Primeiro acesso de cada computador e depois de 7 dias: espera o servidor (pode levar alguns segundos).
+  - Bloquear alguém vale em poucos segundos se o computador dela estiver com internet; sem internet, no máximo em 7 dias.
+
+DIA A DIA
+  - Primeiro acesso do administrador: entrar com a senha provisória do e-mail e, em seguida, "Alterar minha senha".
+  - Pessoa nova: ela clica em "Criar minha conta". Você recebe um e-mail. Entre no programa, clique em
+    "Usuários" (no alto), escolha a pessoa, marque os perfis, (se quiser) um prazo e clique em "Liberar acesso".
+  - Mudar o que alguém vê: "Usuários" > escolha a pessoa > marque os perfis > "Salvar" (vale na próxima vez que ela entrar).
+  - Bloquear: "Bloquear acesso" (dá para liberar de novo). Remover: apaga a conta de vez.
+  - Pessoa esqueceu a senha e o e-mail não chega: "Definir senha..." e passe a senha para ela.
+  - Você não consegue tirar o seu próprio acesso de administrador nem apagar a sua conta (para o programa
+    nunca ficar sem administrador).
+
+O QUE ESTE ACESSO PROTEGE (e o que não)
+  - Ele controla o que o programa MOSTRA para cada pessoa. Quem tem acesso ao Windows do computador e à
+    pasta do estoque continua podendo abrir os arquivos de dados direto. Não é uma criptografia.
+  - Se alguém sair da escola: Usuários > Bloquear. O bloqueio vale em poucos segundos se o computador da
+    pessoa estiver com internet (o programa confere logo depois de abrir); sem internet, em até 7 dias.

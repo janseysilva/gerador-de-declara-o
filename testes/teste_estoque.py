@@ -210,8 +210,96 @@ def teste_resumo():
     assert l.resumo() == {"materiais": 3, "baixo": 1, "zerado": 1}
 
 
+def teste_filtro_do_historico():
+    from datetime import date
+    hoje = date(2026, 11, 12)
+    # datas digitadas
+    assert e.ler_data("12/11/2026", hoje) == date(2026, 11, 12) and e.ler_data("5/3/26", hoje) == date(2026, 3, 5)
+    assert e.ler_data("05-11", hoje) == date(2026, 11, 5)                          # sem ano: o de hoje
+    assert e.ler_data("hoje", hoje) == hoje and e.ler_data(" Ontem ", hoje) == date(2026, 11, 11)
+    assert e.ler_data("", hoje) is None and e.ler_data("   ", hoje) is None
+    for ruim in ("31/02/2026", "13/13/2026", "abc", "12/1/", "2026/11/12", "12/11/20266"):
+        erro_de(e.ler_data, ruim, hoje)
+    # os dois campos de dia: só o 1º = aquele dia; os dois = de/até; só o 2º = até aquele dia
+    d = lambda a, b: e.intervalo_de_dias(a, b, hoje)                                 # noqa: E731
+    assert d("12/11", "") == (date(2026, 11, 12), date(2026, 11, 12))
+    assert d("10/11", "12/11") == (date(2026, 11, 10), date(2026, 11, 12))
+    assert d("", "12/11") == (None, date(2026, 11, 12)) and d("", "") == (None, None)
+    assert "antes" in erro_de(d, "12/11", "10/11")
+
+    # um livro com saídas em dias e pessoas diferentes
+    l = novo()
+    papel = l.cadastrar_material("Papel sulfite A4", "resma")
+    ana = l.cadastrar_destinatario("Professora Ana Exemplo", "Turma A")
+    beto = l.cadastrar_destinatario("Professor Beto Exemplo", "Turma B")
+    t = lambda dia, h, m=0: datetime(2026, 11, dia, h, m)                            # noqa: E731
+    l.registrar_entrada([{"material": papel, "quantidade": 100}], quando=t(9, 7, 50))
+    l.registrar_saida(ana, [{"material": papel, "quantidade": 1}], quando=t(9, 8, 0))
+    l.registrar_saida(beto, [{"material": papel, "quantidade": 1}], quando=t(9, 14, 30))
+    l.registrar_saida(ana, [{"material": papel, "quantidade": 1}], quando=t(10, 8, 45))
+    l.registrar_saida(beto, [{"material": papel, "quantidade": 1}], quando=t(12, 9, 0))
+    quando = lambda **kw: sorted(m["quando"].strftime("%d %H:%M") for m in l.movimentos(**kw))   # noqa: E731
+    assert len(l.movimentos()) == 5
+    # por pessoa: só as saídas dela (a entrada não tem pessoa)
+    assert quando(destinatario_id=ana) == ["09 08:00", "10 08:45"]
+    assert quando(destinatario_id=beto) == ["09 14:30", "12 09:00"]
+    # por dia
+    assert quando(dia_de=date(2026, 11, 9), dia_ate=date(2026, 11, 9)) == ["09 07:50", "09 08:00", "09 14:30"]
+    assert quando(dia_de=date(2026, 11, 10), dia_ate=date(2026, 11, 12)) == ["10 08:45", "12 09:00"]
+    assert quando(dia_de=date(2026, 11, 11)) == ["12 09:00"]                           # de 11 em diante
+    assert quando(dia_ate=date(2026, 11, 9)) == ["09 07:50", "09 08:00", "09 14:30"]  # até 9
+    # pessoa + dia juntos, e junto com o tipo e a pesquisa de texto
+    assert quando(destinatario_id=ana, dia_de=date(2026, 11, 10), dia_ate=date(2026, 11, 10)) == ["10 08:45"]
+    assert quando(destinatario_id=ana, dia_de=date(2026, 11, 11)) == []
+    assert quando(tipo="entrada", dia_de=date(2026, 11, 9), dia_ate=date(2026, 11, 9)) == ["09 07:50"]
+    assert quando(texto="beto", dia_de=date(2026, 11, 10)) == ["12 09:00"]
+    assert quando(texto="beto", dia_ate=date(2026, 11, 9)) == ["09 14:30"]
+    # estornada continua na lista (marcada) e pode ser escondida como antes
+    saida = l.movimentos(destinatario_id=beto)[0]
+    l.estornar(saida["id"], "teste")
+    assert len(l.movimentos(destinatario_id=beto)) == 2 and len(l.movimentos(destinatario_id=beto, incluir_estornados=False)) == 1
+
+
+def teste_relatorio_por_quantidade():
+    # a quantidade digitada: zero vale (só os zerados); vazio, letra e negativo não
+    assert e.ler_limite_relatorio("0") == 0 and e.ler_limite_relatorio("10") == 10 and e.ler_limite_relatorio("2,5") == 2.5
+    for ruim in ("", "   ", "abc", "-1", "2000000"):
+        erro_de(e.ler_limite_relatorio, ruim)
+    l = novo()
+    a = l.cadastrar_material("Papel sulfite A4", "resma")
+    b = l.cadastrar_material("Cola branca", "frasco")
+    c = l.cadastrar_material("Tinta guache", "frasco")
+    d = l.cadastrar_material("Lápis de cor", "caixa")
+    l.registrar_entrada([{"material": a, "quantidade": 10}, {"material": b, "quantidade": 3},
+                         {"material": c, "quantidade": 11}])
+    todos = l.materiais()
+    nomes = lambda lista: [m["nome"] for m in lista]                         # noqa: E731
+    assert nomes(e.filtrar_por_quantidade(todos)) == nomes(todos)             # "Todos": a lista inteira, mesma ordem
+    assert nomes(e.filtrar_por_quantidade(todos, 10)) == ["Cola branca", "Lápis de cor", "Papel sulfite A4"]   # 10 entra (igual)
+    assert nomes(e.filtrar_por_quantidade(todos, 3)) == ["Cola branca", "Lápis de cor"]
+    assert nomes(e.filtrar_por_quantidade(todos, 0)) == ["Lápis de cor"]      # zero = só os zerados
+    assert e.filtrar_por_quantidade(todos, 2.9) == [m for m in todos if m["nome"] == "Lápis de cor"]
+    assert nomes(e.filtrar_por_quantidade(todos, 11)) == nomes(todos)
+    # "Só os que tenho em estoque": tira os zerados (aqui o Lápis de cor, que nunca teve entrada)
+    assert nomes(e.filtrar_em_estoque(todos)) == ["Cola branca", "Papel sulfite A4", "Tinta guache"]
+    assert nomes(e.selecionar_para_relatorio(todos, "todos")) == nomes(todos)
+    assert nomes(e.selecionar_para_relatorio(todos, "tenho")) == ["Cola branca", "Papel sulfite A4", "Tinta guache"]
+    assert nomes(e.selecionar_para_relatorio(todos, "ate", 3)) == ["Cola branca", "Lápis de cor"]
+    # um material que teve entrada e depois ficou zerado por saídas: "Todos" mostra com 0, "tenho" não mostra
+    prof = l.cadastrar_destinatario("Professora Exemplo", "Turma")
+    l.registrar_saida(prof, [{"material": b, "quantidade": 3}])
+    depois = l.materiais()
+    assert [m["saldo"] for m in depois if m["id"] == b] == [0]
+    assert "Cola branca" in nomes(e.selecionar_para_relatorio(depois, "todos"))
+    assert "Cola branca" not in nomes(e.selecionar_para_relatorio(depois, "tenho"))
+    assert "Cola branca" in nomes(e.selecionar_para_relatorio(depois, "ate", 0))
+    # material oculto não aparece no relatório (a lista base já o tira)
+    l.editar_material(d, ativo=False)
+    assert nomes(e.filtrar_por_quantidade(l.materiais(), 0)) == ["Cola branca"]
+
+
 if __name__ == "__main__":
-    testes = [(n, f) for n, f in sorted(globals().items()) if n.startswith("teste_") and callable(f)]
+    testes =[(n, f) for n, f in sorted(globals().items()) if n.startswith("teste_") and callable(f)]
     for nome, funcao in testes:
         funcao()
         print("ok  ", nome)
