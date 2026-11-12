@@ -67,7 +67,7 @@ jobs:
           Start-Process -FilePath "dist\DeclaracoesEscolares.exe" -ArgumentList "--testar-nota", "`"$PWD\lista_exemplo.pdf`"", "`"$PWD\nota.json`"" -Wait
           Get-Content nota.json
           $r = Get-Content nota.json -Raw | ConvertFrom-Json
-          if ($r.ocr_disponivel -ne $true -or $r.modelos_junto -ne $true -or $r.itens.Count -ne 6 -or $r.catalogo_federal -lt 1000 -or $r.modulos_novos -ne $true -or $r.aviso_de_versao -ne $true -or $r.senha_fraca -ne $true) {
+          if ($r.ocr_disponivel -ne $true -or $r.modelos_junto -ne $true -or $r.itens.Count -ne 6 -or $r.catalogo_federal -lt 1000 -or $r.modulos_novos -ne $true -or $r.aviso_de_versao -ne $true -or $r.senha_fraca -ne $true -or $r.dpapi -ne $true) {
             Write-Error "O .exe não conseguiu ler a lista escaneada, os catálogos ou os módulos novos"
             exit 1
           }

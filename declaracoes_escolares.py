@@ -42,7 +42,7 @@ import tela_estoque
 import tela_login
 import tela_usuarios
 
-VERSAO_PROGRAMA = "2.13"
+VERSAO_PROGRAMA = "2.14"
 NOME_PROGRAMA = "Declarações Escolares"
 
 
@@ -3140,6 +3140,8 @@ class Aplicacao(tk.Tk):
                 NOME_PROGRAMA, "Há material numa lista de entrada ou saída que ainda não foi registrado.\n\n"
                 "Sair mesmo assim? O que está na lista será perdido.", icon="warning", parent=self):
             return
+        if not self.sessao.sem_login:
+            acesso.esquecer_senha(self.sessao.email)      # "Sair" apaga a senha salva neste computador (PC compartilhado)
         self.trocar_usuario = True
         self.destroy()
 
@@ -4137,6 +4139,8 @@ def testar_nota_linha_de_comando(caminho, saida):
         res["modulos_novos"] = True
         res["aviso_de_versao"] = atualizacao.mais_nova("99.0", VERSAO_PROGRAMA) and not atualizacao.mais_nova(VERSAO_PROGRAMA, VERSAO_PROGRAMA)
         res["senha_fraca"] = acesso.senha_fraca("12345678") and not acesso.senha_fraca("Boa-Senha-77")
+        # criptografia da senha salva (DPAPI do Windows), só na memória: não grava nada no disco
+        res["dpapi"] = (not acesso.pode_guardar_senha()) or acesso._dpapi(False, acesso._dpapi(True, b"teste")) == b"teste"
     except Exception as erro:
         res["erro_modulos"] = repr(erro)
     with open(saida, "w", encoding="utf-8") as f:

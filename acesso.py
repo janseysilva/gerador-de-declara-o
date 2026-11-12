@@ -210,7 +210,7 @@ def mensagem(resp):
         return "Este e-mail ainda não tem cadastro. Use “Criar minha conta”."
     if motivo == "senha":
         sobra = resp.get("restantes")
-        return "Senha incorreta." + (" Restam {} tentativa(s) antes de travar por {} minutos.".format(sobra, 15) if sobra is not None and sobra <= 2 else "")
+        return INICIO_SENHA_INCORRETA + "." + (" Restam {} tentativa(s) antes de travar por {} minutos.".format(sobra, 15) if sobra is not None and sobra <= 2 else "")
     if motivo == "muitas_tentativas":
         return "Muitas senhas erradas. Esta conta ficou travada por {} minuto(s). Tente de novo depois.".format(resp.get("minutos", 15))
     if motivo == "pendente":
@@ -304,6 +304,92 @@ def _esquecer_local(email):
         _gravar_local(dados)
 
 
+# ---------------------------------------------------------------------------
+# Senha guardada neste computador (opcional: a pessoa marca "Salvar a senha neste computador")
+# ---------------------------------------------------------------------------
+# A senha é criptografada com o DPAPI do Windows (CryptProtectData) antes de ir para o disco. O resultado fica preso à
+# conta do Windows de quem salvou: copiar o arquivo para outro computador, ou abri-lo como outro usuário do Windows,
+# não decifra a senha. Isso NÃO protege de outra pessoa que use a MESMA conta do Windows neste computador (comum em PC
+# compartilhado da escola): por isso o "Sair" do programa apaga a lembrança. Só uma senha por computador (a da última
+# pessoa que marcou a caixa).
+
+INICIO_SENHA_INCORRETA = "Senha incorreta"          # começo da mensagem de senha errada (ver mensagem())
+
+
+def pode_guardar_senha():
+    return os.name == "nt"
+
+
+def _arquivo_senha():
+    return os.path.join(os.path.dirname(_arquivo_local()), "senha_salva.dat")
+
+
+def _dpapi(proteger, dados):
+    """Criptografa (proteger=True) ou decifra com o DPAPI do Windows, só para esta conta do Windows."""
+    import ctypes
+    from ctypes import wintypes
+
+    class _Blob(ctypes.Structure):
+        _fields_ = [("cbData", wintypes.DWORD), ("pbData", ctypes.POINTER(ctypes.c_char))]
+
+    buffer = ctypes.create_string_buffer(dados, len(dados))
+    entrada = _Blob(len(dados), ctypes.cast(buffer, ctypes.POINTER(ctypes.c_char)))
+    saida = _Blob()
+    funcao = ctypes.windll.crypt32.CryptProtectData if proteger else ctypes.windll.crypt32.CryptUnprotectData
+    if not funcao(ctypes.byref(entrada), None, None, None, None, 1, ctypes.byref(saida)):    # 1 = sem janelas do Windows
+        raise ctypes.WinError(ctypes.get_last_error())
+    try:
+        return ctypes.string_at(saida.pbData, saida.cbData)
+    finally:
+        ctypes.windll.kernel32.LocalFree(saida.pbData)
+
+
+def guardar_senha(email, senha):
+    """Guarda a senha (criptografada) para a tela de entrada já vir preenchida. Devolve True se guardou."""
+    if not pode_guardar_senha() or not senha:
+        return False
+    try:
+        bruto = json.dumps({"email": _limpa_email(email), "senha": senha}).encode("utf-8")
+        with open(_arquivo_senha(), "wb") as f:
+            f.write(_dpapi(True, bruto))
+        return True
+    except Exception:
+        return False
+
+
+def senha_guardada(email):
+    """A senha guardada para este e-mail, ou "" (nada guardado, é de outra pessoa ou não dá para decifrar aqui)."""
+    if not pode_guardar_senha():
+        return ""
+    try:
+        with open(_arquivo_senha(), "rb") as f:
+            dados = json.loads(_dpapi(False, f.read()).decode("utf-8"))
+        if dados.get("email") == _limpa_email(email):
+            return str(dados.get("senha") or "")
+    except Exception:
+        pass
+    return ""
+
+
+def esquecer_senha(email=None):
+    """Apaga a senha guardada: a de quem for (email=None) ou só a deste e-mail (a de outra pessoa fica)."""
+    caminho = _arquivo_senha()
+    if not os.path.exists(caminho):
+        return
+    if email is not None and pode_guardar_senha():
+        try:
+            with open(caminho, "rb") as f:
+                dados = json.loads(_dpapi(False, f.read()).decode("utf-8"))
+            if dados.get("email") != _limpa_email(email):
+                return                          # é de outra pessoa: não mexe
+        except Exception:
+            pass                                # ilegível: é lixo, pode apagar
+    try:
+        os.remove(caminho)
+    except OSError:
+        pass
+
+
 def _entrar_sem_internet(email, senha):
     """Entra com a cópia do último acesso neste computador (vale poucos dias). Devolve Sessao ou None."""
     u = _ler_local().get("usuarios", {}).get(email)
@@ -387,6 +473,7 @@ def conferir_acesso(sessao):
     motivo = resp.get("motivo") or resp.get("erro")
     if motivo == "senha":                      # a senha foi trocada em outro computador ou pelo administrador
         _esquecer_local(email)
+        esquecer_senha(email)                  # a senha guardada aqui ficou velha
         return "cortado", "A senha desta conta foi alterada. Entre de novo com a senha nova.", None
     if motivo in ("nao_cadastrado", "bloqueado", "expirado", "pendente"):
         _esquecer_local(email)                 # o acesso foi cancelado: a cópia daqui não vale mais
@@ -444,6 +531,7 @@ def alterar_senha(email, senha, nova):
     resp = _chamar({"acao": "alterar_senha", "email": _limpa_email(email), "senha": senha, "nova_senha": nova})
     if resp.get("ok"):
         _esquecer_local(_limpa_email(email))          # a cópia local tinha a senha antiga
+        esquecer_senha(email)                         # e a senha guardada também
         return True, "Senha alterada. Entre com a senha nova."
     return False, mensagem(resp)
 

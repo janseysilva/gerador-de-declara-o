@@ -457,6 +457,54 @@ def teste_confirmacao_do_acesso_em_segundo_plano():
         assert c.pronta and c.estado == "ok" and c.nova.perfis == ("estoque",)
 
 
+def teste_senha_guardada_neste_computador():
+    """"Salvar a senha neste computador": criptografada (DPAPI), só vale para a mesma pessoa e some quando fica velha."""
+    if not acesso.pode_guardar_senha():
+        return                                                          # só no Windows
+    with Ponte() as p:
+        admin = entrar_admin(p)
+        assert acesso.guardar_senha(" Ana@Exemplo.com", "Boa-Senha-77")
+        bruto = open(acesso._arquivo_senha(), "rb").read()
+        assert b"Boa-Senha-77" not in bruto and b"ana@exemplo.com" not in bruto and len(bruto) > 40, "não pode estar em texto puro"
+        assert acesso.senha_guardada("ANA@exemplo.com ") == "Boa-Senha-77"
+        assert acesso.senha_guardada("beto@exemplo.com") == ""            # é da Ana, não do Beto
+        assert not acesso.guardar_senha("ana@exemplo.com", "")            # sem senha, nada a guardar
+        # apagar a senha de outra pessoa não mexe na da Ana; apagar a da Ana apaga
+        acesso.esquecer_senha("beto@exemplo.com")
+        assert acesso.senha_guardada("ana@exemplo.com") == "Boa-Senha-77"
+        acesso.esquecer_senha("ana@exemplo.com")
+        assert acesso.senha_guardada("ana@exemplo.com") == "" and not os.path.exists(acesso._arquivo_senha())
+        # só uma senha por computador: a da última pessoa que salvou
+        assert acesso.guardar_senha("ana@exemplo.com", "Boa-Senha-77") and acesso.guardar_senha("beto@exemplo.com", "outra-Senha-55")
+        assert acesso.senha_guardada("ana@exemplo.com") == "" and acesso.senha_guardada("beto@exemplo.com") == "outra-Senha-55"
+        acesso.esquecer_senha()                                           # sem e-mail: apaga a de quem for
+        assert not os.path.exists(acesso._arquivo_senha())
+        # arquivo estragado ou de outra conta do Windows: não dá erro, só não preenche; e pode ser apagado
+        with open(acesso._arquivo_senha(), "wb") as f:
+            f.write(b"lixo que nao e do DPAPI")
+        assert acesso.senha_guardada("ana@exemplo.com") == ""
+        acesso.esquecer_senha("ana@exemplo.com")
+        assert not os.path.exists(acesso._arquivo_senha())
+
+        # trocar a senha (Alterar minha senha) apaga a guardada, que ficou velha; senha fraca recusada não apaga
+        assert acesso.cadastrar("Ana Exemplo", "ana@exemplo.com", "segredo1")[0]
+        liberar(admin, "ana@exemplo.com", ["declaracoes"])
+        assert acesso.guardar_senha("ana@exemplo.com", "segredo1")
+        assert not acesso.alterar_senha("ana@exemplo.com", "segredo1", "12345678")[0]
+        assert acesso.senha_guardada("ana@exemplo.com") == "segredo1"
+        assert acesso.alterar_senha("ana@exemplo.com", "segredo1", "Boa-Senha-77")[0]
+        assert acesso.senha_guardada("ana@exemplo.com") == ""
+
+        # o administrador troca a senha em outro lugar: a conferência em segundo plano apaga a guardada
+        assert acesso.entrar_rapido("ana@exemplo.com", "Boa-Senha-77")[0]
+        sessao = acesso.entrar_rapido("ana@exemplo.com", "Boa-Senha-77")[0]
+        assert sessao.por_copia and acesso.guardar_senha("ana@exemplo.com", "Boa-Senha-77")
+        assert acesso.definir_senha(admin, "ana@exemplo.com", "tomate azul 42")[0]
+        estado, texto, nova = acesso.conferir_acesso(sessao)
+        assert estado == "cortado" and acesso.senha_guardada("ana@exemplo.com") == ""
+        assert acesso.INICIO_SENHA_INCORRETA in acesso.mensagem({"motivo": "senha"})
+
+
 def teste_conexao_que_nao_abre_e_tentada_de_novo():
     """Rede da SEMED: às vezes a conexão não abre (erro 10060, 21 s). O programa tenta de novo logo (até 6 vezes)."""
     with Ponte() as p:

@@ -86,6 +86,10 @@ class JanelaAcesso(tk.Tk):
         self._ocupado = False
         self.var_email = tk.StringVar(value=acesso.ultimo_email())
         self.var_mostrar = tk.BooleanVar(value=False)
+        self.var_salvar = tk.BooleanVar(value=False)       # "Salvar a senha neste computador"
+        self._senha_preenchida = ""                        # a senha guardada que veio preenchida na tela (se veio)
+        self._email_da_senha = ""
+        self._usou_guardada = False
         self._entradas_senha = []
 
         self.faixa = tk.Canvas(self, width=self.LARGURA, height=84, highlightthickness=0, bd=0, bg=COR_AZUL_ESCURO)
@@ -96,6 +100,7 @@ class JanelaAcesso(tk.Tk):
         self.bind("<Return>", lambda e: self._acao())
         self.bind("<Escape>", lambda e: self.destroy())
         self.var_mostrar.trace_add("write", lambda *_: self._mostrar_senhas())
+        self.var_email.trace_add("write", self._ao_mudar_email)
         self._mostrar_modo_entrar(aviso, "info")
 
     # -- peças ---------------------------------------------------------------------------
@@ -104,6 +109,7 @@ class JanelaAcesso(tk.Tk):
         for w in self.corpo.winfo_children():
             w.destroy()
         self._entradas_senha = []
+        self._senha_preenchida = ""
         interno = tk.Frame(self.corpo, bg=COR_CARTAO)
         interno.pack(fill="both", expand=True, padx=30, pady=(18, 22))
         return interno
@@ -187,6 +193,14 @@ class JanelaAcesso(tk.Tk):
         q = self._campo(p, "E-mail", self.var_email)
         self._campo(p, "Senha", self._nova_var("senha"), senha=True)
         Chip(p, "Mostrar senha", self.var_mostrar).pack(anchor="w", pady=(10, 0))
+        if acesso.pode_guardar_senha():
+            Chip(p, "Salvar a senha neste computador", self.var_salvar).pack(anchor="w", pady=(6, 0))
+            guardada = acesso.senha_guardada(self.var_email.get())
+            self.var_salvar.set(bool(guardada))
+            if guardada:                       # veio preenchida: é só clicar em Entrar
+                self.v_senha.set(guardada)
+                self._senha_preenchida = guardada
+                self._email_da_senha = self.var_email.get().strip().lower()
         self._mensagem(p)
         self._botao_principal(p, "Entrar", self._entrar)
         links = tk.Frame(p, bg=COR_CARTAO)
@@ -208,17 +222,36 @@ class JanelaAcesso(tk.Tk):
     def focus_senha(self):
         return self._entradas_senha[0]
 
+    def _ao_mudar_email(self, *_):
+        """Mudou o e-mail: a senha que veio preenchida era de outra pessoa, então sai da tela."""
+        if self._senha_preenchida and self.var_email.get().strip().lower() != self._email_da_senha:
+            self._senha_preenchida = ""
+            self.var_salvar.set(False)
+            senha = getattr(self, "v_senha", None)
+            if senha is not None:
+                senha.set("")
+
     def _entrar(self):
         email, senha = self.var_email.get(), self.v_senha.get()
+        self._usou_guardada = bool(self._senha_preenchida) and senha == self._senha_preenchida
         self._trabalhar(lambda: acesso.entrar_rapido(email, senha), self._depois_de_entrar)
 
     def _depois_de_entrar(self, resultado):
         sessao, erro = resultado
         if sessao is None:
+            if self._usou_guardada and erro.startswith(acesso.INICIO_SENHA_INCORRETA):
+                acesso.esquecer_senha(self._email_da_senha)      # a senha guardada ficou velha (foi trocada)
+                self.var_salvar.set(False)
+                self._senha_preenchida = ""
             self._avisar(erro, "erro")
             self.v_senha.set("")
             self.focus_senha.focus_set()
             return
+        if acesso.pode_guardar_senha():
+            if self.var_salvar.get():
+                acesso.guardar_senha(sessao.email, sessao.senha)
+            else:
+                acesso.esquecer_senha(sessao.email)
         acesso.guardar_ultimo_email(sessao.email)
         self.sessao = sessao
         self.destroy()

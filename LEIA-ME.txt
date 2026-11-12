@@ -16,6 +16,11 @@ DECLARAÇÕES ESCOLARES - como usar
    - Errou a senha 5 vezes seguidas? A conta trava por 15 minutos.
    - Sem internet: quem já entrou neste computador nos últimos 7 dias consegue entrar mesmo assim
      (a tela Usuários só funciona com internet).
+   - Salvar a senha: na tela de entrada, marque "Salvar a senha neste computador". Da próxima vez o e-mail e a senha
+     já vêm preenchidos; é só clicar em "Entrar". A senha fica guardada criptografada pelo Windows e só abre na SUA
+     conta do Windows (copiar o arquivo para outro computador não adianta). Não marque em computador que outras
+     pessoas usam com o mesmo usuário do Windows. O botão "Sair" do programa apaga a senha salva. Se a senha mudar,
+     a salva é apagada sozinha e a tela pede a nova.
    - Entrada rápida: quem já entrou neste computador nos últimos 7 dias entra NA HORA, sem esperar a internet.
      Logo depois, o programa confirma o acesso com o servidor em segundo plano. Se o administrador bloqueou ou
      mudou o seu acesso, ele avisa e volta para a tela de entrada. Só a primeira vez em cada computador (ou depois
