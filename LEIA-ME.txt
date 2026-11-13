@@ -69,6 +69,14 @@ DECLARAÇÕES ESCOLARES - como usar
    sobe sozinho. As declarações ficam em Documentos\Declarações Escolares\<ano>.
    O botão "Abrir pasta" mostra todas as declarações já geradas.
 
+   Parecer do Gier: clique em "Baixar parecer" (no quadro 4). Escolha o
+   semestre e o que baixar: um aluno, uma turma, algumas turmas ou todas.
+   O programa baixa um PDF por aluno (o mesmo do ícone da impressora em
+   Pedagógico > Avaliação) e salva em "Parecer do Gier", separado por
+   semestre e turma, sem apagar nada. Alunos "Sem lançamentos" não são
+   baixados: no fim aparece a lista deles. Cada parecer leva alguns
+   segundos; se a internet cair, o programa tenta de novo sozinho.
+
    Frequência do Gier: clique em "Atualizar frequência" (no quadro 4)
    ou em "Atualizar do Gier" (na Configuração). Abre uma janelinha
    no próprio programa: entre com o seu usuário e senha do Gier. Pronto: o

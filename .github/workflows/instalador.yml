@@ -33,6 +33,9 @@ jobs:
         run: |
           python -c "import tkinter, declaracoes_escolares as d; a=d.ler_lista('Nome;Sexo;Fase;Turma\nANA TESTE;F;1 PERIODO;A\n'); assert len(a)==1; p=d.paragrafos('matricula', a[0], {}, 2026); d.gerar_pdf('t.pdf', d.CONFIG_PADRAO, 'matricula', p, 'No 001/2026', ''); d.gerar_word('t.docx', d.CONFIG_PADRAO, 'matricula', p, 'No 001/2026', ''); print('ok')"
 
+      - name: Testar o parecer do Gier (Gier de mentira, nomes inventados)
+        run: python testes/teste_pareceres.py
+
       - name: Gerar o .exe (PyInstaller)
         run: python -m PyInstaller --noconfirm DeclaracoesEscolares.spec
 
@@ -67,7 +70,7 @@ jobs:
           Start-Process -FilePath "dist\DeclaracoesEscolares.exe" -ArgumentList "--testar-nota", "`"$PWD\lista_exemplo.pdf`"", "`"$PWD\nota.json`"" -Wait
           Get-Content nota.json
           $r = Get-Content nota.json -Raw | ConvertFrom-Json
-          if ($r.ocr_disponivel -ne $true -or $r.modelos_junto -ne $true -or $r.itens.Count -ne 6 -or $r.catalogo_federal -lt 1000 -or $r.modulos_novos -ne $true -or $r.aviso_de_versao -ne $true -or $r.senha_fraca -ne $true -or $r.dpapi -ne $true) {
+          if ($r.ocr_disponivel -ne $true -or $r.modelos_junto -ne $true -or $r.itens.Count -ne 6 -or $r.catalogo_federal -lt 1000 -or $r.modulos_novos -ne $true -or $r.aviso_de_versao -ne $true -or $r.senha_fraca -ne $true -or $r.dpapi -ne $true -or $r.pareceres -ne $true) {
             Write-Error "O .exe não conseguiu ler a lista escaneada, os catálogos ou os módulos novos"
             exit 1
           }
