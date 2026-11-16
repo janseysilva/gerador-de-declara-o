@@ -102,7 +102,8 @@ def tratar_get(h):
         if not ESTADO["relatorio"]:
             h._enviar("<html>Desculpe</html>", status=200)
         else:
-            h._enviar(_pdf(*ESTADO["relatorio"]), "application/pdf")
+            rel = ESTADO["relatorio"]
+            h._enviar(rel() if callable(rel) else _pdf(*rel), "application/pdf")
         return True
     return False
 

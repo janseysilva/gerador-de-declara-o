@@ -77,6 +77,12 @@ DECLARAÇÕES ESCOLARES - como usar
    baixados: no fim aparece a lista deles. Cada parecer leva alguns
    segundos; se a internet cair, o programa tenta de novo sozinho.
 
+   Pendências do Gier: clique em "Baixar pendências" (no quadro 4). Escolha
+   uma turma, algumas turmas ou todas. O programa baixa um PDF por turma da
+   "Relação de Pendências de Lançamento de Aula" (Pedagógico > Frequência >
+   Imprimir Relatórios) e salva em "Pendências do Gier", com a data do dia no
+   nome, sem apagar nada.
+
    Frequência do Gier: clique em "Atualizar frequência" (no quadro 4)
    ou em "Atualizar do Gier" (na Configuração). Abre uma janelinha
    no próprio programa: entre com o seu usuário e senha do Gier. Pronto: o

@@ -8,6 +8,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import pdf_gier_exemplo as ex
 import avaliacao_falsa
+import frequencia_falsa
 
 TURMAS = [{"id": 501, "descricao": "PE II -TURMA-E", "nomes": ex.NOMES[:3]},
           {"id": 502, "descricao": "PE I -TURMA-B", "nomes": ex.NOMES[3:]},
@@ -77,7 +78,7 @@ class H(BaseHTTPRequestHandler):
 
     def do_GET(self):
         REGISTRO.append(("GET", self.path))
-        if avaliacao_falsa.tratar_get(self):
+        if avaliacao_falsa.tratar_get(self) or frequencia_falsa.tratar_get(self):
             return
         if self.path.startswith("/Relatorio/RelatorioFiltro/348"):
             if not self._logado():
@@ -102,7 +103,7 @@ class H(BaseHTTPRequestHandler):
         n = int(self.headers.get("Content-Length") or 0)
         corpo = self.rfile.read(n)
         REGISTRO.append(("POST", self.path))
-        if avaliacao_falsa.tratar_post(self, corpo):
+        if avaliacao_falsa.tratar_post(self, corpo) or frequencia_falsa.tratar_post(self, corpo):
             return
         if self.path == "/Login.aspx":
             if b"txtSenha1=x&" not in corpo + b"&":

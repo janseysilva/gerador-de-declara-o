@@ -42,7 +42,7 @@ import tela_estoque
 import tela_login
 import tela_usuarios
 
-VERSAO_PROGRAMA = "2.15"
+VERSAO_PROGRAMA = "2.16"
 NOME_PROGRAMA = "Declarações Escolares"
 
 
@@ -2230,9 +2230,11 @@ class Aplicacao(tk.Tk):
               fonte=(FONTE, 10, "bold"), pad_y=5, pad_x=16).pack(side="left", padx=(0, 8))
         Botao(comandos, "Baixar parecer", self.baixar_pareceres_gier, estilo="azul",
               fonte=(FONTE, 10, "bold"), pad_y=5, pad_x=16).pack(side="left")
-        # Com três comandos, a conta do Gier fica numa linha própria (senão o nome some em 1366 px).
+        # 2ª linha: "Baixar pendências" à esquerda e a conta do Gier à direita (cabe em 1366 px).
         conta = tk.Frame(c4, bg=COR_CARTAO)
         conta.pack(fill="x", pady=(6, 0))
+        Botao(conta, "Baixar pendências", self.baixar_pendencias_gier, estilo="azul",
+              fonte=(FONTE, 10, "bold"), pad_y=5, pad_x=16).pack(side="left")
         self.botao_gier = Botao(conta, "Entrar no Gier", self._ao_clicar_gier, estilo="suave",
                                 fonte=(FONTE, 9, "bold"), pad_y=4, pad_x=12, raio=8)
         self.botao_gier.pack(side="right")
@@ -2666,7 +2668,12 @@ class Aplicacao(tk.Tk):
             self.rolagem.pack_forget()
 
     def _roda_do_mouse(self, evento):
-        alvo = self.winfo_containing(evento.x_root, evento.y_root)
+        try:
+            alvo = self.winfo_containing(evento.x_root, evento.y_root)
+        except KeyError:
+            # A lista aberta de uma caixa de escolha (Combobox) é uma janela interna do Tk que o
+            # Python não conhece: a rodinha ali rola a própria lista e não deve fazer mais nada.
+            return
         if alvo is None:
             return
         if alvo.winfo_toplevel() is not self:              # rodinha na janela de Configuração
@@ -3229,6 +3236,16 @@ class Aplicacao(tk.Tk):
             JanelaBaixarPareceres(self, self)
         else:
             JanelaGier(self, self, depois=lambda: JanelaBaixarPareceres(self, self))
+
+    def baixar_pendencias_gier(self):
+        """Quadro 4: entra no Gier, se precisar, e abre a escolha das turmas para as pendências de lançamento."""
+        if getattr(self, "_janela_gier", None) is not None and self._janela_gier.winfo_exists():
+            self._janela_gier.lift()
+            return
+        if self.sessao_gier is not None and self.sessao_gier.conectado:
+            JanelaBaixarPendencias(self, self)
+        else:
+            JanelaGier(self, self, depois=lambda: JanelaBaixarPendencias(self, self))
 
     def _aviso_flutuante(self, titulo, texto, segundos=8, rodape="Pode baixar a próxima turma."):
         """Aviso verde no canto da tela, que some sozinho."""
@@ -4069,6 +4086,302 @@ class JanelaBaixarPareceres(tk.Toplevel):
             self.destroy()
 
 
+class JanelaBaixarPendencias(tk.Toplevel):
+    """Quadro 4: baixa do Gier a "Relação de Pendências de Lançamento de Aula" (Pedagógico /
+    Frequência → Imprimir Relatórios). Um PDF por turma."""
+
+    MODOS = (("turma", "Uma turma"), ("turmas", "Selecionar turmas"), ("todas", "Todas as turmas"))
+
+    def __init__(self, app, pai):
+        super().__init__(pai)
+        import queue
+        import threading
+        self.app = app
+        self.pai = pai
+        app._janela_gier = self
+        self.title("Baixar pendências do Gier")
+        self.configure(bg=COR_FUNDO)
+        self.transient(pai)
+        self.resizable(False, False)
+        self.protocol("WM_DELETE_WINDOW", self._fechar_pedido)
+        self.fila = queue.Queue()
+        self._trava = threading.Lock()       # o Gier guarda o relatório na sessão: um pedido de cada vez
+        self._parar = False
+        self._ocupado = False
+        self.pagina = None
+        self.vars_turmas = []
+        self.pasta = os.path.join(app.cfg.get("pasta_saida") or os.path.join(pasta_documentos(), "Declarações Escolares"),
+                                  "Pendências do Gier")
+        self.ultima_pasta = ""
+        caixa = tk.Frame(self, bg=COR_CARTAO, highlightthickness=1, highlightbackground=COR_BORDA)
+        caixa.pack(fill="both", expand=True, padx=14, pady=14)
+        self.dentro = tk.Frame(caixa, bg=COR_CARTAO)
+        self.dentro.pack(fill="both", expand=True, padx=18, pady=14)
+        tk.Label(self.dentro, text="Baixar pendências do Gier", bg=COR_CARTAO, fg=COR_AZUL_ESCURO,
+                 font=(FONTE, 13, "bold"), anchor="w").pack(anchor="w")
+        rotulo(self.dentro, "Relação de Pendências de Lançamento de Aula. Um PDF por turma.",
+               fraco=True, tam=9).pack(anchor="w", pady=(2, 8))
+
+        self.area_escolha = tk.Frame(self.dentro, bg=COR_CARTAO)
+        self.area_escolha.pack(fill="x")
+        self.var_andamento = tk.StringVar(value="Abrindo a tela Frequência do Gier...")
+        self.andamento = tk.Label(self.dentro, textvariable=self.var_andamento, bg=COR_LINHA, fg=COR_TEXTO,
+                                  font=(FONTE, 10, "bold"), anchor="w", justify="left", wraplength=600,
+                                  padx=12, pady=8, highlightthickness=1, highlightbackground=COR_BORDA)
+        self.andamento.pack(fill="x", pady=(10, 0))
+        self.quadro_lista = tk.Frame(self.dentro, bg=COR_CARTAO)      # aparece no fim, se algo der errado
+        self.lista_final = tk.Text(self.quadro_lista, height=5, width=70, wrap="word", bg=COR_CARTAO, fg=COR_TEXTO,
+                                   font=(FONTE, 9), relief="flat", highlightthickness=1,
+                                   highlightbackground=COR_BORDA, padx=8, pady=6)
+        barra = ttk.Scrollbar(self.quadro_lista, orient="vertical", command=self.lista_final.yview)
+        self.lista_final.configure(yscrollcommand=barra.set)
+        self.lista_final.pack(side="left", fill="both", expand=True)
+        barra.pack(side="right", fill="y")
+
+        linha = tk.Frame(self.dentro, bg=COR_CARTAO)
+        linha.pack(fill="x", pady=(10, 0))
+        self._linha_pasta = linha
+        rotulo(linha, "Salvar em:", fraco=True, negrito=True, tam=9).pack(side="left")
+        self.rotulo_pasta = rotulo(linha, "", tam=9)
+        self.rotulo_pasta.pack(side="left", padx=(6, 8))
+        self.botao_pasta = Botao(linha, "Trocar pasta", self._trocar_pasta, estilo="tracejado",
+                                 fonte=(FONTE, 9, "bold"), pad_x=10, pad_y=3, raio=8)
+        self.botao_pasta.pack(side="right")
+        self._mostrar_pasta()
+
+        botoes = tk.Frame(self.dentro, bg=COR_CARTAO)
+        botoes.pack(anchor="e", pady=(12, 0))
+        self.botao_abrir = Botao(botoes, "Abrir pasta", self._abrir_pasta, estilo="suave")
+        self.botao_abrir.pack(side="left", padx=(0, 8))
+        self.botao_abrir.definir_ativo(False)
+        self.botao_fechar = Botao(botoes, "Fechar", self._fechar_pedido, estilo="suave")
+        self.botao_fechar.pack(side="left", padx=(0, 8))
+        self.botao_baixar = Botao(botoes, "Baixar pendências", self._baixar, estilo="principal")
+        self.botao_baixar.pack(side="left")
+        self.botao_baixar.definir_ativo(False)
+
+        threading.Thread(target=self._carregar, daemon=True).start()
+        self.after(150, self._olhar_fila)
+        self.update_idletasks()
+        self._centralizar()
+        self.grab_set()
+
+    def _centralizar(self):
+        self.update_idletasks()
+        x = self.pai.winfo_rootx() + (self.pai.winfo_width() - self.winfo_reqwidth()) // 2
+        y = self.pai.winfo_rooty() + max((self.pai.winfo_height() - self.winfo_reqheight()) // 4, 0)
+        self.geometry("+{}+{}".format(max(x, 0), max(y, 0)))
+
+    def _mostrar_pasta(self):
+        texto = self.pasta
+        self.rotulo_pasta.configure(text=texto if len(texto) <= 62 else "..." + texto[-59:])
+
+    def _trocar_pasta(self):
+        escolhida = filedialog.askdirectory(parent=self, title="Onde salvar as pendências", initialdir=self.pasta)
+        if escolhida:
+            self.pasta = os.path.normpath(escolhida)
+            self._mostrar_pasta()
+
+    def _abrir_pasta(self):
+        if self.ultima_pasta:
+            abrir_arquivo(self.ultima_pasta)
+
+    def _no_gier(self, funcao, *args):
+        with self._trava:
+            return funcao(self.app.sessao_gier, *args)
+
+    # -- carregar turmas (em segundo plano) --------------------------------------
+    def _carregar(self):
+        import gier_online
+        import pendencias_gier as pdg
+        try:
+            self.fila.put(("carregou", self._no_gier(pdg.com_tentativas, pdg.carregar_frequencia)))
+        except gier_online.ErroGier as erro:
+            self.fila.put(("sessao" if erro.codigo == "sessao_expirada" else "erro_carregar", pdg.texto_do_erro(erro)))
+        except Exception as erro:
+            self.app._registrar("ERRO ao abrir Baixar pendências: {}".format(type(erro).__name__))
+            self.fila.put(("erro_carregar", "Não foi possível abrir a tela Frequência do Gier. Tente novamente."))
+
+    def _montar_escolha(self, pagina):
+        self.pagina = pagina
+        linha = tk.Frame(self.area_escolha, bg=COR_CARTAO)
+        linha.pack(fill="x", pady=(0, 4))
+        rotulo(linha, "O que baixar ({})".format(pagina.ano), negrito=True).pack(side="left", padx=(0, 12))
+        self.var_modo = tk.StringVar(value="turma")
+        for chave, texto in self.MODOS:
+            if chave == "todas":
+                texto = "{} ({})".format(texto, len(pagina.turmas))
+            ttk.Radiobutton(linha, text=texto, value=chave, variable=self.var_modo,
+                            command=self._mostrar_modo).pack(side="left", padx=(0, 14))
+        self.area_modo = tk.Frame(self.area_escolha, bg=COR_CARTAO, height=10)
+        self.area_modo.pack(fill="x", pady=(6, 0))
+        nomes = [t["descricao"] for t in pagina.turmas]
+
+        self.modo_turma = tk.Frame(self.area_modo, bg=COR_CARTAO)
+        rotulo(self.modo_turma, "Turma:", tam=9).pack(side="left", padx=(0, 6))
+        self.var_turma = tk.StringVar()
+        ttk.Combobox(self.modo_turma, textvariable=self.var_turma, values=nomes, state="readonly", width=34,
+                     style="Campo.TCombobox", font=(FONTE, 10)).pack(side="left")
+
+        self.modo_turmas = tk.Frame(self.area_modo, bg=COR_CARTAO)
+        cab = tk.Frame(self.modo_turmas, bg=COR_CARTAO)
+        cab.pack(fill="x", pady=(0, 4))
+        rotulo(cab, "Marque as turmas", fraco=True, tam=9).pack(side="left")
+        for texto, valor in (("Limpar", False), ("Marcar todas", True)):
+            ligacao = tk.Label(cab, text=texto, bg=COR_CARTAO, fg=COR_AZUL, cursor="hand2",
+                               font=(FONTE, 9, "underline"))
+            ligacao.pack(side="right", padx=(10, 0))
+            ligacao.bind("<Button-1>", lambda e, v=valor: [var.set(v) for var, _t in self.vars_turmas])
+        grade = tk.Frame(self.modo_turmas, bg=COR_CARTAO, highlightthickness=1, highlightbackground=COR_BORDA)
+        grade.pack(fill="x")
+        for i, turma in enumerate(pagina.turmas):
+            var = tk.BooleanVar(value=False)
+            self.vars_turmas.append((var, turma))
+            ttk.Checkbutton(grade, text=turma["descricao"], variable=var).grid(
+                row=i // 3, column=i % 3, sticky="w", padx=(8, 18), pady=1)
+
+        self.modo_todas = tk.Frame(self.area_modo, bg=COR_CARTAO)
+        rotulo(self.modo_todas, "Serão baixadas as pendências de todas as {} turmas, um PDF por turma.".format(
+            len(pagina.turmas)), tam=9, justify="left").pack(anchor="w")
+
+        self._mostrar_modo()
+        self.botao_baixar.definir_ativo(True)
+
+    def _mostrar_modo(self):
+        for quadro in (self.modo_turma, self.modo_turmas, self.modo_todas):
+            quadro.pack_forget()
+        modo = self.var_modo.get()
+        {"turma": self.modo_turma, "turmas": self.modo_turmas, "todas": self.modo_todas}[modo].pack(fill="x")
+        textos = {"turma": "Escolha a turma e clique em Baixar pendências.",
+                  "turmas": "Marque as turmas e clique em Baixar pendências.",
+                  "todas": "Clique em Baixar pendências para baixar todas as turmas."}
+        if not self._ocupado:
+            self.var_andamento.set(textos[modo])
+        self._centralizar()
+
+    # -- baixar ------------------------------------------------------------------
+    def _baixar(self):
+        import threading
+        if self.pagina is None or self._ocupado:
+            return
+        modo = self.var_modo.get()
+        if modo == "turma":
+            turmas = [t for t in self.pagina.turmas if t["descricao"] == self.var_turma.get()]
+            if not turmas:
+                self.var_andamento.set("Escolha a turma.")
+                return
+        elif modo == "turmas":
+            turmas = [t for var, t in self.vars_turmas if var.get()]
+            if not turmas:
+                self.var_andamento.set("Marque pelo menos uma turma.")
+                return
+        else:
+            turmas = list(self.pagina.turmas)
+        self._ocupado = True
+        self._parar = False
+        self.quadro_lista.pack_forget()
+        for b in (self.botao_baixar, self.botao_pasta, self.botao_abrir):
+            b.definir_ativo(False)
+        self.botao_fechar.definir_texto("Cancelar")
+        threading.Thread(target=self._trabalhar, args=(turmas, self.pasta), daemon=True).start()
+
+    def _trabalhar(self, turmas, pasta):
+        import gier_online
+        import pendencias_gier as pdg
+        salvos, problemas = [], []
+        dia = datetime.now().strftime("%d-%m-%Y")
+        for n, turma in enumerate(turmas, 1):
+            if self._parar:
+                return self.fila.put(("fim", (salvos, problemas, True, pasta)))
+            self.fila.put(("andamento", "Baixando: turma {} de {} ({})".format(n, len(turmas), turma["descricao"])))
+            try:
+                pdf = self._no_gier(pdg.com_tentativas, pdg.baixar_pendencias, turma)
+                os.makedirs(pasta, exist_ok=True)
+                caminho = _caminho_livre(os.path.join(pasta, nome_arquivo_seguro(
+                    "{} - Pendências {}".format(turma["descricao"], dia)) + ".pdf"))
+                with open(caminho, "wb") as arquivo:
+                    arquivo.write(pdf)
+                salvos.append(caminho)
+            except gier_online.ErroGier as erro:
+                if erro.codigo == "sessao_expirada":
+                    return self.fila.put(("sessao", pdg.texto_do_erro(erro)))
+                problemas.append("{}: {}".format(turma["descricao"], pdg.texto_do_erro(erro)))
+            except OSError as erro:
+                problemas.append("{}: não consegui gravar o PDF ({})".format(turma["descricao"], type(erro).__name__))
+            except Exception as erro:
+                self.app._registrar("ERRO ao baixar pendências: {}".format(type(erro).__name__))
+                problemas.append("{}: não foi possível baixar".format(turma["descricao"]))
+        self.fila.put(("fim", (salvos, problemas, False, pasta)))
+
+    def _terminou(self, salvos, problemas, cancelado, pasta):
+        self._ocupado = False
+        self.botao_fechar.definir_texto("Fechar")
+        self.botao_baixar.definir_ativo(True)
+        self.botao_pasta.definir_ativo(True)
+        if salvos:
+            self.ultima_pasta = pasta
+        self.botao_abrir.definir_ativo(bool(self.ultima_pasta))
+        partes = ["Cancelado." if cancelado else "Pronto.", "{} PDF(s) salvo(s).".format(len(salvos))]
+        if problemas:
+            partes.append("{} não deram certo.".format(len(problemas)))
+        self.var_andamento.set(" ".join(partes))
+        if problemas:
+            self.lista_final.configure(state="normal")
+            self.lista_final.delete("1.0", "end")
+            self.lista_final.insert("1.0", "NÃO DERAM CERTO:\n" + "\n".join("  " + p for p in problemas))
+            self.lista_final.configure(state="disabled")
+            self.quadro_lista.pack(fill="x", pady=(8, 0), before=self._linha_pasta)
+        self.app.var_status.set("Pendências do Gier: {} PDF(s) salvos em {}.".format(len(salvos), pasta))
+        self.app._registrar("Baixar pendências: {} PDF(s), {} problema(s)".format(len(salvos), len(problemas)))
+        self._centralizar()
+
+    def _olhar_fila(self):
+        import queue
+        if not self.winfo_exists():
+            return
+        try:
+            while True:
+                tipo, dado = self.fila.get_nowait()
+                if tipo == "andamento":
+                    self.var_andamento.set(dado)
+                elif tipo == "carregou":
+                    self._montar_escolha(dado)
+                elif tipo == "erro_carregar":
+                    self.var_andamento.set(dado)
+                elif tipo == "sessao":
+                    self.app.sessao_gier = None
+                    self.app.mostrar_estado_gier()
+                    self.var_andamento.set("A conexão com o Gier expirou. Feche esta janela e clique em "
+                                           "Baixar pendências de novo.")
+                    self._ocupado = False
+                    self.botao_fechar.definir_texto("Fechar")
+                    self.botao_baixar.definir_ativo(False)
+                elif tipo == "fim":
+                    self._terminou(*dado)
+        except queue.Empty:
+            pass
+        if self.winfo_exists():
+            self.after(150, self._olhar_fila)
+
+    def _fechar_pedido(self):
+        # Fecha na hora. O download para sozinho antes da próxima turma.
+        if self._ocupado:
+            self._parar = True
+            self.app.var_status.set("Download das pendências cancelado. Os PDFs já baixados estão em {}.".format(
+                self.pasta))
+        self._fechar()
+
+    def _fechar(self):
+        try:
+            self.grab_release()
+        except tk.TclError:
+            pass
+        self.app._janela_gier = None
+        self.app._janelas_gier_fechadas.append(self)   # ver JanelaGier._fechar
+        if self.winfo_exists():
+            self.destroy()
+
+
 class JanelaGier(tk.Toplevel):
     """O Gier dentro do programa: pede usuário e senha aqui mesmo e busca a frequência sem navegador.
     A senha só passa pela memória; a conexão termina quando o programa fecha."""
@@ -4632,6 +4945,8 @@ def testar_nota_linha_de_comando(caminho, saida):
         res["modulos_novos"] = True
         import pareceres_gier             # parecer do Gier (2.15): o módulo veio junto e lê a resposta do Gier
         res["pareceres"] = pareceres_gier.ler_delta("1|hiddenField|x|a|") == [("hiddenField", "x", "a")]
+        import pendencias_gier            # pendências de lançamento do Gier (2.16)
+        res["pendencias"] = pendencias_gier.id_do_relatorio("<html></html>") == "524"
         res["aviso_de_versao"] = atualizacao.mais_nova("99.0", VERSAO_PROGRAMA) and not atualizacao.mais_nova(VERSAO_PROGRAMA, VERSAO_PROGRAMA)
         res["senha_fraca"] = acesso.senha_fraca("12345678") and not acesso.senha_fraca("Boa-Senha-77")
         # criptografia da senha salva (DPAPI do Windows), só na memória: não grava nada no disco
